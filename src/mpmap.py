@@ -1,0 +1,237 @@
+import os, gzip, mmap
+import pysam, subprocess
+import re2 as re
+
+# %%
+def multipass_mapping_from_hicpro(hicpro_results, project_name, ligation_site, genome_index, nthd):
+    result_dir = f"{hicpro_results}bowtie_results/bwt2_multipass/{project_name}"
+    try:
+        os.makedirs(result_dir)
+    except OSError as error:
+        print(error)
+
+    bwt_opts = "--very-sensitive -L 30 --score-min L,-0.6,-0.2"
+    prefix, _ = solve_pair_end_samples(hicpro_results, project_name)
+    intermediates = {pfx: {"bams": [], "5primeFq": [], "3primeFq": [], "ToMap": -1} for pfx in prefix}
+
+    # Pass 1 result from hicpro. However, add "P1RxG/L" group tag to the bam files
+    ipass = 0
+    global_dir = f"{hicpro_results}bowtie_results/bwt2_global/{project_name}/"
+    local_dir = f"{hicpro_results}bowtie_results/bwt2_local/{project_name}/"
+    for pfx in prefix:
+        ri = paired_side(pfx)
+        # global
+        tag = f"P0{ri}G"
+        inp = os.path.join(global_dir, f"{pfx}.bwt2glob.bam")
+        out = os.path.join(result_dir, f"{pfx}.{tag}.bam")
+        unmap_pfx = os.path.join(result_dir, f"{pfx}.{tag}")
+        pysam.addreplacerg("-r", f"ID:{tag}", "-@", f"{nthd}", "-o", out, inp)
+        leftover = split_fastq_by_motif(
+            os.path.join(global_dir, f"{pfx}.bwt2glob.unmap.fastq"),
+            ligation_site,
+            unmap_pfx,
+        )
+        intermediates[pfx]["bams"].append(out)
+        intermediates[pfx]["5primeFq"].append(unmap_pfx + ".5prime.fastq")
+        intermediates[pfx]["3primeFq"].append(unmap_pfx + ".3prime.fastq")
+        intermediates[pfx]["ToMap"] = leftover
+        # local
+        tag = f"P0{ri}L"
+        inp = os.path.join(local_dir, f"{pfx}.bwt2glob.unmap_bwt2loc.bam")
+        out = os.path.join(result_dir, f"{pfx}.{tag}.bam")
+        pysam.addreplacerg("-r", f"ID:{tag}", "-@", f"{nthd}", "-o", out, inp)
+        intermediates[pfx]["bams"].append(out)
+
+    # multi pass mapping
+    while any([intermediates[pfx]["ToMap"] != 0 for pfx in prefix]):
+        ipass += 1
+        for pfx in prefix:
+            if intermediates[pfx]["ToMap"] == 0:
+                continue
+            ri = paired_side(pfx)
+
+            # global
+            tag = f"P{ipass}{ri}G"
+            inp = intermediates[pfx]["3primeFq"][-1]
+            out = os.path.join(result_dir, f"{pfx}.{tag}.bam")
+            with open(out, "w") as o:
+                map_proc = subprocess.Popen(
+                    [
+                        "bowtie2",
+                        *bwt_opts.split(" "),
+                        "--end-to-end",
+                        "--reorder",
+                        "--un",
+                        "temp.fq",
+                        "--rg-id",
+                        tag,
+                        "--rg",
+                        f"SM:{pfx}",
+                        "-p",
+                        str(nthd),
+                        "-x",
+                        genome_index,
+                        "-U",
+                        inp,
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=None,  # subprocess.PIPE,
+                )
+                sam_filt = subprocess.Popen(
+                    ["samtools", "view", "-F", "4", "-bS", "-"],
+                    stdin=map_proc.stdout,
+                    stdout=o,
+                )
+                sam_filt.wait()
+
+            if os.stat("temp.fq").st_size != 0:
+                unmap_pfx = os.path.join(result_dir, f"{pfx}.{tag}")
+                leftover = split_fastq_by_motif(
+                    "temp.fq",
+                    ligation_site,
+                    unmap_pfx,
+                )
+                os.remove("temp.fq")
+                intermediates[pfx]["bams"].append(out)
+                intermediates[pfx]["5primeFq"].append(unmap_pfx + ".5prime.fastq")
+                intermediates[pfx]["3primeFq"].append(unmap_pfx + ".3prime.fastq")
+                intermediates[pfx]["ToMap"] = leftover
+
+                # local
+                tag = f"P{ipass}{ri}L"
+                inp = intermediates[pfx]["5primeFq"][-1]
+                out = os.path.join(result_dir, f"{pfx}.{tag}.bam")
+                with open(out, "w") as o:
+                    map_proc = subprocess.Popen(
+                        [
+                            "bowtie2",
+                            *bwt_opts.split(" "),
+                            "--end-to-end",
+                            "--reorder",
+                            "--un",
+                            "temp.fq",
+                            "--rg-id",
+                            tag,
+                            "--rg",
+                            f"SM:{pfx}",
+                            "-p",
+                            str(nthd),
+                            "-x",
+                            genome_index,
+                            "-U",
+                            inp,
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=None,  # subprocess.PIPE,
+                    )
+                    sam_filt = subprocess.Popen(
+                        ["samtools", "view", "-F", "4", "-bS", "-"],
+                        stdin=map_proc.stdout,
+                        stdout=o,
+                    )
+                    sam_filt.wait()
+
+                os.remove("temp.fq")
+                intermediates[pfx]["bams"].append(out)
+            else:
+                intermediates[pfx]["ToMap"] = 0
+
+    # merge all bams
+    pysam.merge(
+        "-@",
+        str(nthd),
+        "-n",
+        "-f",
+        f"{result_dir}/merged.bam",
+        *[b for pfx in prefix for b in intermediates[pfx]["bams"]],
+    )
+    pysam.sort(
+        "-m",
+        "1024M",
+        "-@",
+        str(nthd),
+        "-n",
+        "-o",
+        f"{result_dir}/{project_name}.merged.bam",
+        f"{result_dir}/merged.bam",
+    )
+    os.remove(f"{result_dir}/merged.bam")
+
+    # clean intermidiate files
+    for pfx, files in intermediates.items():
+        [os.remove(f) for f in files["bams"]]
+        [os.remove(f) for f in files["5primeFq"]]
+        [os.remove(f) for f in files["3primeFq"]]
+
+
+# multipass_mapping_from_hicpro(
+#    hicpro_results,
+#    project_name,
+#    MseI_DdeI_Ligated_Site,
+#    "/home/software/bowtie2-2.2.9/genome/mm9/mm9",
+#    35,
+# )
+
+# %%
+def split_fastq_by_motif(fastq, motif, prefix):
+    search_pattern = re.compile(motif).search
+    cnt = 0
+    with open(f"{prefix}.5prime.fastq", "wb", 1024 * 1024) as out5, open(
+        f"{prefix}.3prime.fastq", "wb", 1024 * 1024
+    ) as out3:
+        out5_write, out3_write = out5.write, out3.write
+        for name1, seq, name2, qual_seq in read_fastq(fastq):
+            m = search_pattern(seq)
+            if m:
+                cnt += 1
+                start, end = m.span()
+                out5_write(name1 + seq[:start] + b"\n" + name2 + qual_seq[:start] + b"\n")
+                out3_write(name1 + seq[end:] + name2 + qual_seq[end:])
+
+    return cnt
+
+
+def read_fastq(fastq):
+    if fastq.endswith("gz"):
+        inp_ = gzip.open(fastq, "rb")
+    else:
+        inp_ = open(fastq, "rb")
+    inp = mmap.mmap(inp_.fileno(), 0, access=mmap.ACCESS_READ)
+    readline = inp.readline
+
+    while 1:
+        name1 = readline()
+        if not name1:  # EOF
+            inp_.close()
+            inp.close()
+            break
+        seq = readline()
+        name2 = readline()
+        qual_seq = readline()
+
+        yield name1, seq, name2, qual_seq
+
+
+def paired_side(str):
+    if "R1" in str:  # or "_1" in str:
+        return "R1"
+    elif "R2" in str:  # or "_2" in str:
+        return "R2"
+    else:
+        raise ValueError("Undetermined PE data")
+
+
+def solve_pair_end_samples(hicpro_results, project_name):
+    bams = [f for f in os.listdir(f"{hicpro_results}bowtie_results/bwt2_global/{project_name}/") if f.endswith("bam")]
+    if len(bams) % 2 != 0:
+        raise Exception("Files are not paired")
+
+    prefix = [f.split(".")[0] for f in bams]
+    return prefix, bams
+
+
+# split_fastq_by_motif(
+#    "/Extension_HDD2/Hanbin/ES_Cell/E14/HiC3_HL/HL12_HiChIP_Test/E14_201206_HiC3_out/bowtie_results/bwt2_global/data/HL12_1515_S16_L002_R1_001_mm9.bwt2glob.unmap.fastq",
+#    MseI_DdeI_Ligated_Site,
+#    "test",
+# )

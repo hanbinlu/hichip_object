@@ -1,0 +1,465 @@
+import logging
+import os, subprocess
+import operator, itertools
+import pysam
+import re2 as re  # pip install google-re2
+import numpy as np
+from typing import NamedTuple
+import ray
+
+MseI_DdeI_Digestion_Site = r"(CT[ATCG]AG)|(TTAA)"
+MseI_DdeI_Ligated_Site = (
+    b"(CT[ATCG]AT[ATCG]AG)|(CT[ATCG]ATAA)|(TTAT[ATCG]AG)|(TTATAA)"
+)
+MboI_Digestion_Site = r"GATC"
+
+########## Process Multiple Pass Mapped BAM File to ValidPair  ############
+def construct_mpp_valid_pair(
+    bam_file, mapq, digestion_sites, out, nprocs, parallel
+):
+    """
+    Multiple pass mapped and paired BAM is processed to validpair records in parallel.
+    Output is sorted and duplication-removed validpair data in MVP (Multiple pass mapped ValidPair).
+    """
+    procs_per_worker, workers, workers_out = nprocs // parallel, [], []
+    kernel = count_high_order_pet.options(num_cpus=procs_per_worker)
+    for i in range(parallel):
+        temp_out = f"{out}.{i}"
+        # temp mvp files
+        workers_out.append(temp_out)
+        workers.append(
+            kernel.remote(
+                bam_file,
+                mapq,
+                digestion_sites,
+                procs_per_worker,
+                i,
+                parallel,
+                temp_out,
+            )
+        )
+
+    results = [ray.get(j) for j in workers]
+    cnt = sum([x[0] for x in results])
+    vp = sum([x[1] for x in results])
+    re_de_dump = sum([x[2] for x in results])
+    inter_chro = sum([x[3] for x in results])
+
+    with open(f"{out}.sorted", "w") as o:
+        cat_proc = subprocess.Popen(
+            ["cat", *workers_out], stdout=subprocess.PIPE
+        )
+        sort_mvp = subprocess.Popen(
+            ["sort", "-k12,12", "--parallel", str(nprocs), "-S", "20G"],
+            stdin=cat_proc.stdout,
+            stdout=o,
+        )
+        sort_mvp.wait()
+
+    mvp_rmdup(f"{out}.sorted", out)
+
+    [os.remove(f) for f in workers_out]
+    os.remove(f"{out}.sorted")
+
+    return cnt, vp, re_de_dump, inter_chro
+
+
+@ray.remote(num_returns=4)
+def count_high_order_pet(
+    bam_file, mapq, digestion_sites, nthd, worker_id, n_workers, temp_file
+):
+    """
+    Parse chunks (worker_id:n_workers:End) of paired BAM file to Hi-C validpair data.
+    For records has more than 2 mapped fragment, keep the "longest" pair.
+    """
+    cnt, vp, re_de_dump, inter_chro = 0, 0, 0, 0
+    with pysam.AlignmentFile(bam_file, threads=nthd) as bfh, open(
+        temp_file, "w", 1024 * 100
+    ) as o:
+        # chunks in the BAM file to parse
+        worker_items_iter = itertools.islice(
+            mp_bam_rec_reader(bfh, mapq), worker_id, None, n_workers
+        )
+        # each sequence PET is parsed to a list of MappedFrags
+        for qname, raw_data in worker_items_iter:
+            data = list(raw_data)
+            if len(data) >= 2:
+                cnt += 1
+                frags = list(map(bam_rec_to_mapped_seg, data))
+                frags.sort(key=operator.attrgetter("chromosome", "middle"))
+                # for PET that has more than 2 mapped fragment, keep the longest separated pairs
+                frag_i, frag_j = _longest_cis_pair(frags)
+                if frag_i.chromosome != frag_j.chromosome:
+                    is_vp = True
+                    inter_chro += 1
+                    res_i = np.searchsorted(
+                        digestion_sites[frag_i.chromosome],
+                        frag_i.middle,
+                    )
+                    res_j = np.searchsorted(
+                        digestion_sites[frag_j.chromosome],
+                        frag_j.middle,
+                    )
+                else:
+                    res_i, res_j = np.searchsorted(
+                        digestion_sites[frag_i.chromosome],
+                        [frag_i.middle, frag_j.middle],
+                    )
+                    if res_j - res_i > 1:
+                        is_vp = True
+                        vp += 1
+                    else:
+                        # religation, dangling end, dump pair
+                        is_vp = False
+                        re_de_dump += 1
+
+                # write result in validpair format suffix with tag describing all the mapped segments
+                if is_vp:
+                    mvp_tag = _mvp_tag(frags)
+                    mvp_rec = (
+                        _write_mvp_rec(
+                            qname, frag_i, frag_j, res_i, res_j, mvp_tag
+                        )
+                        + "\n"
+                    )
+                    o.write(mvp_rec)
+
+    return cnt, vp, re_de_dump, inter_chro
+
+
+def _longest_cis_pair(frags):
+    res = {}
+    for frg in frags:
+        res.setdefault(frg.chromosome, []).append(frg)
+
+    longest_dist, chro_of_longest = 0, ""
+    for k, v in res.items():
+        if len(v) > 1:
+            # v.sort(key=operator.attrgetter("middle"))
+            dist = v[-1].middle - v[0].middle
+            if dist > longest_dist:
+                longest_dist = dist
+                chro_of_longest = k
+
+    if longest_dist:
+        return res[chro_of_longest][0], res[chro_of_longest][-1]
+    else:
+        # all inter chro
+        return frags[0], frags[-1]
+
+
+########## Select PETs from Multiple Pass Mapped BAM to Dump as Reads ############
+def dump_PETs_to_bed(
+    bam_file,
+    mapq,
+    digestion_sites,
+    out,
+    nprocs,
+    parallel,
+    exclude_interchro=False,
+    local_range=1e20,
+    read_length=100,
+):
+    """
+    Pipline to process Hi-C BAM file to filtered reads in bed format:
+    1. Parsing BAM, write filtered PETs to intermediate files -- chr1,x1,chr2,x2,chr3,x3...
+    2. call linux `sort` and `uniq` to remove duplication
+    (1 and 2 is done by `construct_stringent_local_pair`)
+    3. each chr_i,x_i flatten to one bed record and dump to output file
+
+    `local_range`: 1e20 in default to include all cis pairs
+    `exclude_interchro`: `False` in default to include interchromosomal pairs (can be more than 2 mapped fragments)
+    """
+    construct_stringent_local_pair(
+        bam_file,
+        local_range,
+        exclude_interchro,
+        mapq,
+        digestion_sites,
+        "temp.out",
+        nprocs,
+        parallel,
+    )
+
+    logging.info(f"Flattening to PETs to {read_length} bp reads")
+    half_rl = read_length // 2
+    with open("temp.out") as inp, open(out, "w") as o:
+        for line in inp:
+            fields = line.split(",")
+            for i in range(0, len(fields), 2):
+                chro, pos = fields[i], int(fields[i + 1])
+                o.write(
+                    chro
+                    + "\t"
+                    + str(pos - half_rl)
+                    + "\t"
+                    + str(pos + half_rl)
+                    + "\n"
+                )
+
+    subprocess.run(["rm", "temp.out"])
+    count_reads = subprocess.run(["wc", "-l", out], stdout=subprocess.PIPE)
+    num_reads = count_reads.stdout.decode().split(" ")[0]
+    logging.info(f"{num_reads} reads were dumped.")
+
+
+def construct_stringent_local_pair(
+    bam_file,
+    local_range,
+    exclude_interchro,
+    mapq,
+    digestion_sites,
+    out,
+    nprocs,
+    parallel,
+):
+    """
+    Parse chunks (worker_id:n_workers:End) of paired BAM file to Hi-C validpair data.
+    Considering following situation of a PET of `n` mapped segments:
+    1. n == 2: Always includes re-ligation, self-ligation, dangling-end pairs; For interchrom and validpairs determine by `exclude_interchro` and `local_range` respectively
+    2. n > 2: if any pair of fragment were determined to `False` base on situation 1, discard the PET.
+    """
+    procs_per_worker, workers, workers_out = nprocs // parallel, [], []
+    kernel = count_stringent_local_high_order_pet.options(
+        num_cpus=procs_per_worker
+    )
+    logging.info("Parsing bam data to Hi-C pairs")
+    for i in range(parallel):
+        temp_out = f"{out}.{i}"
+        # temp mvp files
+        workers_out.append(temp_out)
+        workers.append(
+            kernel.remote(
+                bam_file,
+                local_range,
+                exclude_interchro,
+                mapq,
+                digestion_sites,
+                procs_per_worker,
+                i,
+                parallel,
+                temp_out,
+            )
+        )
+
+    results = [ray.get(j) for j in workers]
+    cnt = sum(results)
+
+    # the outfile only has mvp tags, call unique to remove duplication
+    logging.info("Removing duplications")
+    with open(out, "w") as o:
+        cat_proc = subprocess.Popen(
+            ["cat", *workers_out], stdout=subprocess.PIPE
+        )
+        sort_mvp = subprocess.Popen(
+            ["sort", "-T", ".", "--parallel", str(nprocs), "-S", "20G"],
+            stdin=cat_proc.stdout,
+            stdout=subprocess.PIPE,
+        )
+        rmdup_mvp = subprocess.Popen(
+            ["uniq"],
+            stdin=sort_mvp.stdout,
+            stdout=o,
+        )
+        rmdup_mvp.wait()
+
+    [os.remove(f) for f in workers_out]
+    count_rmdup = subprocess.run(["wc", "-l", out], stdout=subprocess.PIPE)
+    num_rmdup = count_rmdup.stdout.decode().split(" ")[0]
+    logging.info(
+        f"Processed {cnt} paired PETs. {num_rmdup} paired PETs were kept after duplication removal"
+    )
+
+
+@ray.remote(num_returns=1)
+def count_stringent_local_high_order_pet(
+    bam_file,
+    local_range,
+    exclude_interchro,
+    mapq,
+    digestion_sites,
+    nthd,
+    worker_id,
+    n_workers,
+    temp_file,
+):
+    """
+    Parse records of chunks (worker_id:n_workers:End) of BAM file to Hi-C PETs data
+    """
+    cnt, local_pet = 0, 0
+    pysam.set_verbosity(0)
+    with pysam.AlignmentFile(bam_file, threads=nthd) as bfh, open(
+        temp_file, "w", 1024 * 100
+    ) as o:
+        # chunks in the BAM file to parse
+        worker_items_iter = itertools.islice(
+            mp_bam_rec_reader(bfh, mapq), worker_id, None, n_workers
+        )
+        # each sequence PET is parsed to a list of MappedFrags
+        # This function only keeps stringent local pairs of following configurations:
+        # len(MappedSeg) == 2: Re-ligation, Self-ligation, dangling-end, inter chromasomal, and dist <= `short_cis
+        # len(MappedSeg) > 2: if all cis _longest_cis <= `short_cist`; all inter chro, keep all; inter chro + cis <= `short_dist`
+        for _, raw_data in worker_items_iter:
+            data = list(raw_data)
+            is_local = None
+            if len(data) == 2:
+                cnt += 1
+                frags = list(map(bam_rec_to_mapped_seg, data))
+                frags.sort(key=operator.attrgetter("chromosome", "middle"))
+                # for PET that has more than 2 mapped fragment, keep the longest separated pairs
+                frag_i, frag_j = _longest_cis_pair(frags)
+                if frag_i.chromosome != frag_j.chromosome:
+                    # inter chro
+                    if exclude_interchro:
+                        is_local = False
+                    else:
+                        is_local = True
+                else:
+                    res_i, res_j = np.searchsorted(
+                        digestion_sites[frag_i.chromosome],
+                        [frag_i.middle, frag_j.middle],
+                    )
+                    if res_j - res_i > 1:
+                        if frag_j.middle - frag_i.middle <= local_range:
+                            # short cis
+                            is_local = True
+                        else:
+                            is_local = False
+                    else:
+                        # religation, self-ligation, dangling end, dump pair
+                        # dump pair are very few
+                        is_local = True
+            elif len(data) > 2:  # high order situation
+                cnt += 1
+                frags = list(map(bam_rec_to_mapped_seg, data))
+                frags.sort(key=operator.attrgetter("chromosome", "middle"))
+                # group by chro
+                res = {}
+                for frg in frags:
+                    res.setdefault(frg.chromosome, []).append(frg)
+
+                if len(res.keys()) == 1:
+                    # all frags are from same chromosome
+                    res_i, res_j = np.searchsorted(
+                        digestion_sites[frags[0].chromosome],
+                        [frags[0].middle, frags[-1].middle],
+                    )
+                    if res_j - res_i > 1:
+                        if frags[-1].middle - frags[0].middle <= local_range:
+                            # short cis
+                            is_local = True
+                        else:
+                            is_local = False
+                    else:
+                        # religation, self-ligation, dangling end, dump pair
+                        # dump pair are very few
+                        is_local = True
+                else:  # intra + inter
+                    if exclude_interchro:
+                        is_local = False
+                    else:
+                        # single fragment default 0 <= local_range
+                        is_local = all(
+                            [
+                                v[-1].middle - v[0].middle <= local_range
+                                for _, v in res.items()
+                            ]
+                        )
+
+            # write result in validpair format suffix with tag describing all the mapped segments
+            if is_local:
+                local_pet += 1
+                mvp_tag = _mvp_tag(frags)
+                o.write(mvp_tag + "\n")
+
+    return cnt
+
+
+# def _group_frags_by_chro(frags):
+#    res = {}
+#    for frg in frags:
+#        res.setdefault(frg.chromosome, []).append(frg.middle)
+#
+#    for k, v in res.items():
+#        v.sort()
+#
+#    return res
+
+########### Functions that operates MVP data ############
+def _mvp_tag(frags):
+    # chr1,x1,chr2,x2,chr3,x3 ...
+    tag_components = []
+    for frg in frags:
+        tag_components.append(frg.chromosome)
+        tag_components.append(str(frg.middle))
+
+    return ",".join(tag_components)
+
+
+def _write_mvp_rec(qname, frag_i, frag_j, res_i, res_j, mvp_tag):
+    # A00953:185:HN7TMDSXY:1:1419:26494:17033 chr1    3000368 +       chr1    3000709 -       213    HIC_chr1_9       HIC_chr1_12     40      42 weight VPFF/VPFR/VPRR/VPRF pet_coor(added field)
+    fields = [
+        qname,
+        frag_i.chromosome,
+        str(frag_i.middle),
+        "+",
+        frag_j.chromosome,
+        str(frag_j.middle),
+        "+",
+        str(res_i),
+        str(res_j),
+        str(frag_i.mapq),
+        str(frag_j.mapq),
+        mvp_tag,
+    ]
+    return "\t".join(fields)
+
+
+def mvp_rmdup(inp, out):
+    with open(inp) as f, open(out, "w", 1024 * 1024) as o:
+        mvp_tag_gen = (line.rsplit("\t", 1) for line in f)
+        for _, rec in itertools.groupby(
+            mvp_tag_gen, key=operator.itemgetter(1)
+        ):
+            o.write(next(rec)[0] + "\n")
+
+
+########### Functions that parsed MP BAM file into MappedSegment ############
+class MappedSegment(NamedTuple):
+    chromosome: str
+    start: int
+    middle: int
+    mapq: int
+
+
+def bam_rec_to_mapped_seg(rec):
+    p1, p2 = rec.reference_start, rec.reference_end - 1
+    return MappedSegment(
+        rec.reference_name,
+        p2 if rec.is_reverse else p1,
+        (p1 + p2) // 2,
+        rec.mapping_quality,
+    )
+
+
+def mp_bam_rec_reader(bfh, mapq):
+    def is_discard_rec(rec):
+        return rec.is_unmapped or rec.mapping_quality <= mapq
+
+    mp_bam_rec_iter = itertools.groupby(
+        itertools.filterfalse(is_discard_rec, bfh),
+        key=operator.attrgetter("query_name"),
+    )
+    return mp_bam_rec_iter
+
+
+def genome_digestion(genome_fa, motif):
+    pattern = re.compile(motif)
+    dig_pos = {}
+    with pysam.FastaFile(genome_fa) as f:
+        for entry in f.references:
+            dig_pos[entry] = np.array(
+                [m.end() - 1 for m in pattern.finditer(f.fetch(entry))]
+            )
+
+    return dig_pos
