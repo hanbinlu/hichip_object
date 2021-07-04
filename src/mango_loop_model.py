@@ -14,7 +14,12 @@ from load_loop_data import (
     anchor_depth_by_A2N_PETs,
 )
 from model_ILD import build_feature_PET_models, _spline_fit_model
-from load_hic_matrix import build_hic_matrix, putative_anchor_to_non_loops
+from load_hic_matrix import (
+    build_hic_matrix,
+    hic_background_matrix,
+    putative_anchor_to_non_loops,
+    non_anchor_dist_scaling,
+)
 
 
 class Loop_MANGO:
@@ -122,42 +127,6 @@ class Loop_MANGO:
             f"{sum(potential_interactions)} interactions were adjusted by averaging non-interaction neighborhood to re-build the background model"
         )
 
-        # adjust_loop_metric = self.loop_metric.copy()
-        # potential_interaction_index = self.interaction_statistics.index[
-        #    potential_interactions
-        # ]
-        # adjust_loop_metric.loc[
-        #    potential_interaction_index, "C"
-        # ] = self.interaction_statistics.E[potential_interactions].values
-        ## adjust depth value
-        # mat = csc_matrix(
-        #    (
-        #        adjust_loop_metric.C.values,
-        #        (adjust_loop_metric.I.values, adjust_loop_metric.J.values),
-        #    ),
-        #    (len(self.anchors), len(self.anchors)),
-        # )
-        # adjust_anchor_depth = mat.sum(axis=0).A1 + mat.sum(axis=1).A1
-        # mat_coo = mat.tocoo()
-        # adjust_loop_metric.loc[:, "D_i"] = adjust_anchor_depth[mat_coo.row]
-        # adjust_loop_metric.loc[:, "D_j"] = adjust_anchor_depth[mat_coo.col]
-        # adjust_loop_metric.D = adjust_loop_metric.D_i * adjust_loop_metric.D_j
-
-        # (
-        #    self.dist_model_data,
-        #    self.dist_PET_model,
-        #    self.dist_NLOOP_model,
-        # ) = build_feature_PET_models(
-        #    adjust_loop_metric, "L", self.nbins, plot_model
-        # )
-
-        # (
-        #    self.depth_model_data,
-        #    self.depth_PET_model,
-        #    self.depth_NLOOP_model,
-        # ) = build_feature_PET_models(
-        #    adjust_loop_metric, "D", self.nbins, plot_model
-        # )
         logging.info("Adjusting and re-fitting model")
         dist_y_adjust = []
         for _, row in self.dist_model_data.iterrows():
@@ -411,6 +380,7 @@ class Loop_MANGO_A2N:
         # load hic matrix
         logging.info("Loading ValidPair data to contact matrix")
         hic_mtx = build_hic_matrix(vp, self.genomic_bins, parallel)
+        hic_bg_mtx = hic_background_matrix(hic_mtx, genomic_bins, inter_range)
 
         # Determine putative anchor-to-non pairs within distance range
         logging.info(
@@ -425,10 +395,15 @@ class Loop_MANGO_A2N:
         hic_mtx = hic_mtx.multiply(putative_a2n_loops != 0)
         # count genoimc bins' depth using anchor-non PETs
         gbins_depth = hic_mtx.sum(axis=0).A1 + hic_mtx.sum(axis=1).A1
+        # non anchor depth set to be sum of N2N contacts
+        gbins_depth[~self.is_anchor] = (
+            hic_bg_mtx.sum(0).A1 + hic_bg_mtx.sum(1).A1
+        )[~self.is_anchor]
 
-        # mask 0 depth anchors; notice that loop_pet already masked
+        # mask 0 depth anchors
         mask_opt = diags(gbins_depth != 0, format="csc", dtype=int)
         putative_a2n_loops = mask_opt * putative_a2n_loops * mask_opt
+        hic_mtx = mask_opt * hic_mtx * mask_opt
 
         # organize loop_pet and putative_loops into pd.DataFrame structure
         # loop_metric is data of all putative loops
@@ -470,7 +445,7 @@ class Loop_MANGO_A2N:
             self.depth_PET_model,
             self.depth_NLOOP_model,
         ) = build_feature_PET_models(
-            self.loop_metric, "D_i", self.nbins, plot_model
+            self.loop_metric, "D", self.nbins, plot_model
         )
 
     def calculate_loop_significancy(self, parallel=20):
@@ -617,44 +592,3 @@ def _anchor_as_bin_i(I, J, is_anchor):
         i, j = I[k], J[k]
         if is_anchor[j]:
             I[k], J[k] = j, i
-
-
-# def _stratum_multiple_test(interaction_statistics, stratum_size=1):
-#    """
-#    Implement the lambda-chunking method (Rao et al., 2014) to overcome multiple-testing for wide range mean nulls of Hi-C data
-#    """
-#    # low, E_max, qvals = (
-#    #     0,
-#    #     interaction_statistics.E.max(),
-#    #     np.empty(len(interaction_statistics)),
-#    # )
-#    # while low < E_max:
-#    #     high = low + stratum_size
-#    #     index = (interaction_statistics.E >= low) & (
-#    #         interaction_statistics.E < high
-#    #     )
-#    #     qvals[index.values] = multipletests(
-#    #         interaction_statistics.P[index].values, 1, "fdr_bh"
-#    #     )[1]
-#    #     low = high
-#    qvals = np.empty(len(interaction_statistics))
-#    percentile_E = np.percentile(
-#        interaction_statistics.E.values, [0, 20, 40, 60, 80, 100]
-#    )
-#    for low, high in zip(percentile_E[:-1], percentile_E[1:]):
-#        index = (interaction_statistics.E >= low) & (
-#            interaction_statistics.E < high
-#        )
-#        qvals[index.values] = multipletests(
-#            interaction_statistics.P[index].values, 1, "fdr_bh"
-#        )[1]
-#
-#    interaction_statistics["Q"] = qvals
-
-# logging.info("Building Hi-C background model")
-# self.hic_background_model_data = non_anchor_dist_scaling(
-#     vp, genomic_bins, nbins, inter_range, parallel=parallel
-# )
-# self.hic_background_model = _spline_fit_model(
-#     self.hic_background_model_data, "x", "y"
-# )

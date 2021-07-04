@@ -41,12 +41,17 @@ def build_feature_PET_models(loop_metric, feature, nbins, plot_model=True):
     return feature_model_data, feature_PET_model, feature_NLOOP_model
 
 
-def _bin_x_along_y_eq_count(df, y_col_name, num_bins, how_to_count):
+def _bin_x_along_y_eq_count(
+    df, y_col_name, num_bins, how_to_count, is_sorted=False
+):
     """
     Split df along column `y` to `num_bins`. Each resulting bin `[y_low, y_high)` will have nearly equal sum counts, calculating by:
     `how_to_count(filtered_df[y_low <= filtered_df[y_col] < y_high])`
     """
-    df_sort_along_y = df.sort_values(by=y_col_name)
+    if not is_sorted:
+        df_sort_along_y = df.sort_values(by=y_col_name)
+    else:
+        df_sort_along_y = df
     y_sum = how_to_count(df_sort_along_y)
 
     unique_y_vals = df_sort_along_y[y_col_name].unique()

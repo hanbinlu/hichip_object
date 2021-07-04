@@ -5,6 +5,7 @@ from numba import njit
 from numba.typed import List
 from scipy.sparse import csc_matrix
 from ray.util.multiprocessing import Pool
+from scipy.sparse.csr import csr_matrix
 from model_ILD import _bin_x_along_y_eq_count
 
 
@@ -155,6 +156,54 @@ def _build_hic_matrix_kernel(vp, gbins, chunk_size, job_id, parallel):
     return mtx
 
 
+def hic_background_matrix(
+    hic_mtx,
+    gbins,
+    inter_range=(5000, 2000000),
+):
+    """
+    Only keep non-anchor contacts
+
+    `gbins`: continuous and sorted genomic bins in bed format and added anchor column
+    """
+    # bin raw vp data into triplet df
+    mtx = hic_mtx.tocoo()
+    df = pd.DataFrame(
+        {
+            "I": mtx.row,
+            "J": mtx.col,
+            "C": mtx.data,
+        }
+    )
+    # logging.info("Filtering contacts and add anchor info")
+    # keep intrachro and contacts meet inter range
+    intra_chro_df = df[gbins.chro.values[mtx.row] == gbins.chro.values[mtx.col]]
+    dist = (
+        gbins.start.values[intra_chro_df.J.values]
+        - gbins.start.values[intra_chro_df.I.values]
+    )
+    dist_qual_index = (dist >= inter_range[0]) & (dist <= inter_range[1])
+    dist_qual_df = intra_chro_df[dist_qual_index]
+    # non anchor contacts
+    non_anchor_contact_idx = (
+        gbins.Num_Anchors.values[dist_qual_df.I.values] == 0
+    ) & (gbins.Num_Anchors.values[dist_qual_df.J.values] == 0)
+
+    filtered_triplet = dist_qual_df[non_anchor_contact_idx]
+    n = hic_mtx.shape[0]
+
+    return csr_matrix(
+        (
+            filtered_triplet.C.values.copy(),
+            (
+                filtered_triplet.I.values.copy(),
+                filtered_triplet.J.values.copy(),
+            ),
+        ),
+        (n, n),
+    )
+
+
 @njit
 def _assign_pos_to_bins(x, bin_pos):
     return np.searchsorted(bin_pos, x, side="right") - 1
@@ -202,73 +251,73 @@ def _eq_occupancy_bin_along_feature(df, feature, nbins):
 # Model response Cij of HiChIP as Poisson Regression by explanatory variables IP efficient and Hi-C distant expected counts.
 
 ######### Hi-C scaling background buiding from non-anchor contacts ########
-# def non_anchor_dist_scaling(
-#    vp,
-#    gbins,
-#    nbins=200,
-#    inter_range=(10000, 2000000),
-#    chunk_size=500000,
-#    parallel=10,
-# ):
-#    """
-#    Expected counts as function of genomic distance from non-anchor contacts
-#
-#    `gbins`: continuous and sorted genomic bins in bed format and added anchor column
-#    """
-#    # bin raw vp data into triplet df
-#    logging.info("Loading validpair data into Triplet dataframe")
-#    mtx = _build_hic_matrix(vp, gbins, parallel, chunk_size).tocoo()
-#    df = pd.DataFrame(
-#        {
-#            "I": mtx.row,
-#            "J": mtx.col,
-#            "C": mtx.data,
-#        }
-#    )
-#    logging.info("Filtering contacts and add anchor info")
-#    # keep intrachro and contacts meet inter range
-#    intra_chro_df = df[gbins.chro.values[mtx.row] == gbins.chro.values[mtx.col]]
-#    dist = (
-#        gbins.start.values[intra_chro_df.J.values]
-#        - gbins.start.values[intra_chro_df.I.values]
-#    )
-#    dist_qual_index = (dist >= inter_range[0]) & (dist <= inter_range[1])
-#    dist_qual_df = intra_chro_df[dist_qual_index].copy().reset_index(drop=True)
-#    # I, J bin has anchors?
-#    dist_qual_df["L"] = dist[dist_qual_index]
-#    dist_qual_df["Anchor_I"] = gbins.Num_Anchors.values[dist_qual_df.I.values]
-#    dist_qual_df["Anchor_J"] = gbins.Num_Anchors.values[dist_qual_df.J.values]
-#
-#    # non anchor contacts to equal occupancy binsgg
-#    non_anchor_contact_idx = (dist_qual_df.Anchor_I == 0) & (
-#        dist_qual_df.Anchor_J == 0
-#    )
-#    model_data = _eq_occupancy_bin_along_feature(
-#        dist_qual_df[non_anchor_contact_idx], "L", nbins
-#    )
-#
-#    # base on eq occupancy bin borders calculate possible pairs
-#    logging.info("Counting possible bin pairs at different distance ranges")
-#    all_possible_pairs = np.zeros(len(model_data), dtype=int)
-#    all_possible_pairs_sum_dist = np.zeros(len(model_data), dtype=int)
-#    with Pool(processes=parallel) as pool:
-#        result = pool.map(
-#            lambda x: _num_bin_pairs_for_dist_bins(
-#                x[1].start.values, model_data.Low.values, model_data.High.values
-#            ),
-#            gbins[gbins.Num_Anchors == 0].groupby(by="chro"),
-#        )
-#    for v in result:
-#        all_possible_pairs += v[0]
-#        all_possible_pairs_sum_dist += v[1]
-#    # for _, chro_gb in gbins[gbins.Num_Anchors == 0].groupby(by="chro"):
-#    #     all_possible_pairs += _num_bin_pairs_for_dist_bins(
-#    #         chro_gb.start.values, model_data.Low.values, model_data.High.values
-#    #     )
-#    model_data["All_Items"] = all_possible_pairs
-#    model_data["x"] = all_possible_pairs_sum_dist / all_possible_pairs
-#    model_data["y"] = (
-#        model_data.Sum_PETs / model_data.Sum_PETs.sum() / model_data.All_Items
-#    )
-#
-#    return model_data
+def non_anchor_dist_scaling(
+    vp,
+    gbins,
+    nbins=200,
+    inter_range=(10000, 2000000),
+    chunk_size=500000,
+    parallel=10,
+):
+    """
+    Expected counts as function of genomic distance from non-anchor contacts
+
+    `gbins`: continuous and sorted genomic bins in bed format and added anchor column
+    """
+    # bin raw vp data into triplet df
+    logging.info("Loading validpair data into Triplet dataframe")
+    mtx = build_hic_matrix(vp, gbins, parallel, chunk_size).tocoo()
+    df = pd.DataFrame(
+        {
+            "I": mtx.row,
+            "J": mtx.col,
+            "C": mtx.data,
+        }
+    )
+    logging.info("Filtering contacts and add anchor info")
+    # keep intrachro and contacts meet inter range
+    intra_chro_df = df[gbins.chro.values[mtx.row] == gbins.chro.values[mtx.col]]
+    dist = (
+        gbins.start.values[intra_chro_df.J.values]
+        - gbins.start.values[intra_chro_df.I.values]
+    )
+    dist_qual_index = (dist >= inter_range[0]) & (dist <= inter_range[1])
+    dist_qual_df = intra_chro_df[dist_qual_index].copy().reset_index(drop=True)
+    # I, J bin has anchors?
+    dist_qual_df["L"] = dist[dist_qual_index]
+    dist_qual_df["Anchor_I"] = gbins.Num_Anchors.values[dist_qual_df.I.values]
+    dist_qual_df["Anchor_J"] = gbins.Num_Anchors.values[dist_qual_df.J.values]
+
+    # non anchor contacts to equal occupancy binsgg
+    non_anchor_contact_idx = (dist_qual_df.Anchor_I == 0) & (
+        dist_qual_df.Anchor_J == 0
+    )
+    model_data = _eq_occupancy_bin_along_feature(
+        dist_qual_df[non_anchor_contact_idx], "L", nbins
+    )
+
+    # base on eq occupancy bin borders calculate possible pairs
+    logging.info("Counting possible bin pairs at different distance ranges")
+    all_possible_pairs = np.zeros(len(model_data), dtype=int)
+    all_possible_pairs_sum_dist = np.zeros(len(model_data), dtype=int)
+    with Pool(processes=parallel) as pool:
+        result = pool.map(
+            lambda x: _num_bin_pairs_for_dist_bins(
+                x[1].start.values, model_data.Low.values, model_data.High.values
+            ),
+            gbins[gbins.Num_Anchors == 0].groupby(by="chro"),
+        )
+    for v in result:
+        all_possible_pairs += v[0]
+        all_possible_pairs_sum_dist += v[1]
+    # for _, chro_gb in gbins[gbins.Num_Anchors == 0].groupby(by="chro"):
+    #     all_possible_pairs += _num_bin_pairs_for_dist_bins(
+    #         chro_gb.start.values, model_data.Low.values, model_data.High.values
+    #     )
+    model_data["All_Items"] = all_possible_pairs
+    model_data["x"] = all_possible_pairs_sum_dist / all_possible_pairs
+    model_data["y"] = (
+        model_data.Sum_PETs / model_data.Sum_PETs.sum() / model_data.All_Items
+    )
+
+    return model_data
