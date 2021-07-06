@@ -185,7 +185,7 @@ def _check_PET_from_anchors(vp_df, anchors):
 
 
 def anchor_depth_by_A2N_PETs(
-    vp, anchors, parallel=5, chunk_size=500000, vp_filter=False
+    vp, anchors, parallel=5, chunk_size=500000, vp_filter=None
 ):
     """
     All PETs of Anchor-Non summation, not limited to mid range PETs.
@@ -202,7 +202,7 @@ def anchor_depth_by_A2N_PETs(
 
 
 def anchor_depth_by_anchor_PETs(
-    vp, anchors, parallel=5, chunk_size=500000, vp_filter=False
+    vp, anchors, parallel=5, chunk_size=500000, vp_filter=None
 ):
     """
     All PETs of summation at anchors, not limited to mid range PETs and not exclude anchor-anchor
@@ -224,7 +224,7 @@ def _anchor_depth(
     mode,
     parallel=5,
     chunk_size=500000,
-    vp_filter=False,
+    vp_filter=None,
 ):
     """
     Count depth of anchors either from: all PETs (`mode=0`), anchor-to-non PETs (`mode=1`), loop PETs (`mode=2`).
@@ -311,7 +311,7 @@ def _anchor_PET_sum(
     for vp_df in vp_chunk:
         if vp_filter:
             is_in_anchor_1, is_in_anchor_2 = _check_PET_from_anchors(
-                _mid_range_pets(vp_df), anchors
+                _mid_range_pets(vp_df, inter_range=vp_filter), anchors
             )
         else:
             is_in_anchor_1, is_in_anchor_2 = _check_PET_from_anchors(

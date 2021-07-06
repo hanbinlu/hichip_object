@@ -24,38 +24,46 @@ from load_hic_matrix import (
 
 class Loop_MANGO:
     """
-    Loop is defined as a pair of anchor. Loop object is to process the given anchors to putative loops calculated their metric from interaction data.
+    The object processes the given anchors to putative loops calculated their metric from interaction data.
+    Note: loop is a term used for a pair of anchor regardless whether it is linked by PETs or significant.
+        In contrast, interaction is a term used for significant loops.
     """
 
     def __init__(
-        self, anchors, vp, nbins, inter_range=(5000, 2000000), parallel=20
+        self, genomic_bins, vp, nbins, inter_range=(5000, 2000000), parallel=20
     ):
-        # anchors are pd.DataFrame in bed format and are sorted
+        # genomic_bins are pd.DataFrame in bed format and are sorted
         # colnames ["chro", "start", "end"] (add check for colname obligation)
-        if any(anchors.index.values != np.arange(len(anchors))):
+        # 4th column "Num_Anchors", non zero value indicates the correpondent gb has anchors
+        if any(genomic_bins.index.values != np.arange(len(genomic_bins))):
             raise ValueError("Anchors index must be RangeIndex")
-        self.anchors = anchors.copy()
+        self.genomic_bins = genomic_bins.copy()
+        self.is_anchor = genomic_bins.Num_Anchors.values != 0
+        self.anchors = (
+            self.genomic_bins[self.is_anchor].copy().reset_index(drop=True)
+        )
 
         # interaction distance to be considered
         self.dist_low, self.dist_high = inter_range
         self.nbins = nbins
         # intra, dist qualified anchor pairs
-        putative_loops = putative_loops_from_anchors(anchors, inter_range)
+        putative_loops = putative_loops_from_anchors(self.anchors, inter_range)
 
         # read interaction data into anchor-anchor sparse matrix
         logging.info("Loading loop PETs")
-        loop_pet = loop_PET_count(vp, anchors)
+        loop_pet = loop_PET_count(vp, self.anchors)
         # drop loop_pets of unqualified anchor pairs
         loop_pet = loop_pet.multiply(putative_loops != 0)
 
         # count anchor depth using anchor-non PETs
         # anchor_depth = loop_pet.sum(axis=0).A1 + loop_pet.sum(axis=1).A1
+        # Note: vp_filter here counts *validpairs* within 0 ~ 2MB distances
         logging.info("Counting anchor depth")
         anchor_depth = (
             anchor_depth_by_A2N_PETs(
-                vp, anchors, parallel=parallel, vp_filter=True
+                vp, self.anchors, parallel=parallel, vp_filter=inter_range
             ).values
-            / (anchors.end.values - anchors.start.values)
+            / (self.anchors.end.values - self.anchors.start.values)
             * 1000
         )
 
@@ -75,7 +83,7 @@ class Loop_MANGO:
         self.count_cut = self.interaction_statistics.C.mean()
 
         logging.info(
-            f"{len(anchors)} of anchors forms {len(self.loop_metric)} putative mid-range loops"
+            f"{len(self.anchors)} of anchors forms {len(self.loop_metric)} putative mid-range loops"
         )
         logging.info(
             f"{len(self.loop_metric[self.loop_metric.C != 0])} observed loops that contains {self.loop_metric.C.sum()} PETs (avg = {self.count_cut})"
