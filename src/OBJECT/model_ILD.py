@@ -23,7 +23,7 @@ def build_feature_PET_models(loop_metric, feature, nbins, plot_model=True):
         feature_model_data, "xItems", "yItems"
     )
     if plot_model:
-        fig, axs = plt.subplots(ncols=2, nrows=1)
+        fig, axs = plt.subplots(ncols=2, nrows=1, figsize=(10, 5))
         axs[0].scatter(np.log10(feature_model_data.x), feature_model_data.y)
         axs[0].plot(
             np.log10(feature_model_data.x),

@@ -1,5 +1,4 @@
-import itertools, logging
-from typing import overload
+import logging
 import pandas as pd
 import numpy as np
 import networkx as nx
@@ -228,7 +227,7 @@ def loops_cobound_by_peaks(peaks, loops, connect_dist):
     anchor1_bound, anchor2_bound = np.zeros(len(loops), dtype=int), np.zeros(
         len(loops), dtype=int
     )
-    for chro, chro_peaks in peaks.groupby(by="chro"):
+    for chro, chro_peaks in peaks.groupby(by="chr"):
         chro_loop_index = loops.chr1 == chro
         chro_loops = loops.loc[chro_loop_index, :]
         peak_centers = (chro_peaks.start.values + chro_peaks.end.values) // 2

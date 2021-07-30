@@ -14,6 +14,7 @@ def call_anchors_from_hichip(
     bam,
     digestion_sites,
     prefix,
+    result_path=None,
     exclude_interchro=True,
     local_range=2000000,
     macs2_path="/home/coco/miniconda3/envs/hichip-loop/bin/macs2",
@@ -26,7 +27,12 @@ def call_anchors_from_hichip(
     """
     Call peaks from HiChIP mapped data in BAM format.
     """
-    macs2_result_dir = f"{prefix}_MACS2_results/"
+    if result_path:
+        macs2_result_dir = os.path.join(result_path, f"{prefix}_MACS2_results/")
+    else:
+        # current folder
+        macs2_result_dir = f"{prefix}_MACS2_results/"
+
     try:
         os.mkdir(macs2_result_dir)
     except FileExistsError:
@@ -144,6 +150,20 @@ def process_peak_to_anchor_bins(
             sep="\t",
             skiprows=39,
         ).iloc[:, 1:4]
+        peaks.columns = ["chro", "start", "end"]
+        # peak_anchor_bins, _ = genomic_anchor_bins(gbs, peaks, merge_adjacent)
+        gbs["Num_Anchors"] = genomic_anchor_bins(
+            gbs, peaks, merge_adjacent=False
+        )[1]
+        # add up anchor number too
+        gbs_merged = merge_anchors_bins(gbs)
+    elif format == "bed":
+        peaks = pd.read_csv(
+            peak_file,
+            sep="\t",
+            comment="#",
+            header=None,
+        ).iloc[:, 0:3]
         peaks.columns = ["chro", "start", "end"]
         # peak_anchor_bins, _ = genomic_anchor_bins(gbs, peaks, merge_adjacent)
         gbs["Num_Anchors"] = genomic_anchor_bins(

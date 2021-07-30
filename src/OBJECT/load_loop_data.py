@@ -362,6 +362,90 @@ def _anchor_PET(pet_x, anchor_index, anchor_start, anchor_end):
     return is_in_anchor
 
 
+############## Given an interaction list, count number of PETs from the validpair dataset ############
+def count_interaction_strength(vp, interactions):
+    """
+    interactions: bedpe format: chr1, x1, y1, chr2, x2, y2, ...
+    """
+    anchors = pd.DataFrame(
+        {
+            "chro": np.append(
+                interactions.chr1.values.copy(), interactions.chr2.values.copy()
+            ),
+            "start": np.append(
+                interactions.x1.values.copy(), interactions.x2.values.copy()
+            ),
+            "end": np.append(
+                interactions.y1.values.copy(), interactions.y2.values.copy()
+            ),
+        }
+    ).drop_duplicates(ignore_index=True)
+    anchors["indexer"] = range(len(anchors))
+    loop_counts = loop_PET_count(vp, anchors)
+
+    # anchor 1D signal
+    anchors["Depth"] = (
+        anchor_depth_by_A2N_PETs(
+            vp,
+            anchors,
+        ).values
+        / (anchors.end.values - anchors.start.values)
+        * 1000
+    )
+
+    I = interactions.merge(
+        anchors, left_on=["chr1", "x1", "y1"], right_on=["chro", "start", "end"]
+    ).indexer.values
+    J = interactions.merge(
+        anchors, left_on=["chr2", "x2", "y2"], right_on=["chro", "start", "end"]
+    ).indexer.values
+
+    counts = [
+        loop_counts[i, j] if i <= j else loop_counts[j, i] for i, j in zip(I, J)
+    ]
+    return np.array(counts)
+
+
+def count_interaction_anchor_depth(vp, interactions):
+    """
+    interactions: bedpe format: chr1, x1, y1, chr2, x2, y2, ...
+    """
+    anchors = pd.DataFrame(
+        {
+            "chro": np.append(
+                interactions.chr1.values.copy(), interactions.chr2.values.copy()
+            ),
+            "start": np.append(
+                interactions.x1.values.copy(), interactions.x2.values.copy()
+            ),
+            "end": np.append(
+                interactions.y1.values.copy(), interactions.y2.values.copy()
+            ),
+        }
+    ).drop_duplicates(ignore_index=True)
+    anchors["indexer"] = range(len(anchors))
+
+    # anchor 1D signal
+    anchor_depth = (
+        anchor_depth_by_A2N_PETs(
+            vp,
+            anchors,
+        ).values
+        / (anchors.end.values - anchors.start.values)
+        * 1000
+    )
+
+    I = interactions.merge(
+        anchors, left_on=["chr1", "x1", "y1"], right_on=["chro", "start", "end"]
+    ).indexer.values
+    J = interactions.merge(
+        anchors, left_on=["chr2", "x2", "y2"], right_on=["chro", "start", "end"]
+    ).indexer.values
+
+    depth_i, depth_j = anchor_depth[I], anchor_depth[J]
+    return depth_i, depth_j
+
+
 ############## Function to process anchors ##############
 def genomic_bins(chro_size, s):
     gb = {"chro": [], "start": [], "end": []}
