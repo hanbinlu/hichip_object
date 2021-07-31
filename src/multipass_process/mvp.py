@@ -1,10 +1,11 @@
-import logging
 import os, subprocess
+import logging
 import operator, itertools
 import pysam
 import re2 as re  # pip install google-re2
 import numpy as np
 from typing import NamedTuple
+from random import sample
 import ray
 
 MseI_DdeI_Digestion_Site = r"(CT[ATCG]AG)|(TTAA)"
@@ -14,15 +15,25 @@ MseI_DdeI_Ligated_Site = (
 MboI_Digestion_Site = r"GATC"
 
 ########## Process Multiple Pass Mapped BAM File to ValidPair  ############
-def construct_mpp_valid_pair(
-    bam_file, mapq, digestion_sites, out, nprocs, parallel
+def construct_mpp_validpair(
+    bam_file, mapq, digestion_sites, out, nprocs, procs_per_pysam=2
 ):
     """
-    Multiple pass mapped and paired BAM is processed to validpair records in parallel.
-    Output is sorted and duplication-removed validpair data in MVP (Multiple pass mapped ValidPair).
+    Process multiple-pass mapped and paired BAM to validpair records. Output is sorted and duplication removed.
+
+    Parameters
+    ----------
+    bam_file: path to the multiple-pass mapped and paired BAM.
+    mapq: keep high mapq reads.
+    digestion_sites: raw regexp string, digestion sites use for the Hi-C experiment.
+    out: path for the output mvp file
+    nprocs: number of cpu to be used
+    procs_per_pysam: the function split `nprocs // procs_per_pysam` pysam jobs to parallel process the `bam_file` to speedup.
+        Each pysam job is using `pysam_parallel` cores. (Note: one pysam jobs using `nprocs` cores is not efficient)
     """
-    procs_per_worker, workers, workers_out = nprocs // parallel, [], []
-    kernel = count_high_order_pet.options(num_cpus=procs_per_worker)
+    parallel, workers, workers_out = nprocs // procs_per_pysam, [], []
+    kernel = count_high_order_pet.options(num_cpus=procs_per_pysam)
+    # worker i takes care of `itertools.islice(i, None, parallel)` PET records in `bam_file`
     for i in range(parallel):
         temp_out = f"{out}.{i}"
         # temp mvp files
@@ -32,19 +43,21 @@ def construct_mpp_valid_pair(
                 bam_file,
                 mapq,
                 digestion_sites,
-                procs_per_worker,
+                procs_per_pysam,
                 i,
                 parallel,
                 temp_out,
             )
         )
 
+    # merge temp outputs
     results = [ray.get(j) for j in workers]
     cnt = sum([x[0] for x in results])
     vp = sum([x[1] for x in results])
     re_de_dump = sum([x[2] for x in results])
     inter_chro = sum([x[3] for x in results])
 
+    # mvp tag: chr1,x1,chr2,x2,chr3,x3... record all mapped segment of a PET
     with open(f"{out}.sorted", "w") as o:
         cat_proc = subprocess.Popen(
             ["cat", *workers_out], stdout=subprocess.PIPE
@@ -69,14 +82,15 @@ def count_high_order_pet(
     bam_file, mapq, digestion_sites, nthd, worker_id, n_workers, temp_file
 ):
     """
-    Parse chunks (worker_id:n_workers:End) of paired BAM file to Hi-C validpair data.
+    Parse (worker_id:n_workers:End) th PET record in paired BAM file to Hi-C validpair data and add mvp tag for all mapped segs of the PET
+
     For records has more than 2 mapped fragment, keep the "longest" pair.
     """
     cnt, vp, re_de_dump, inter_chro = 0, 0, 0, 0
     with pysam.AlignmentFile(bam_file, threads=nthd) as bfh, open(
         temp_file, "w", 1024 * 100
     ) as o:
-        # chunks in the BAM file to parse
+        # slicing records in the BAM file to parse
         worker_items_iter = itertools.islice(
             mp_bam_rec_reader(bfh, mapq), worker_id, None, n_workers
         )
@@ -128,6 +142,9 @@ def count_high_order_pet(
 
 
 def _longest_cis_pair(frags):
+    """if there are cis pairs, keep the longest separation pair. Otherwise, rand out an interchro pair"""
+
+    # group by chromosomes
     res = {}
     for frg in frags:
         res.setdefault(frg.chromosome, []).append(frg)
@@ -145,7 +162,11 @@ def _longest_cis_pair(frags):
         return res[chro_of_longest][0], res[chro_of_longest][-1]
     else:
         # all inter chro
-        return frags[0], frags[-1]
+        # rand two segments
+        i, j = sample(range(len(frags)), 2)
+        if j > i:
+            i, j = j, i
+        return frags[i], frags[j]
 
 
 ########## Select PETs from Multiple Pass Mapped BAM to Dump as Reads ############
@@ -155,21 +176,40 @@ def dump_PETs_to_bed(
     digestion_sites,
     out,
     nprocs,
-    parallel,
+    procs_per_pysam,
     exclude_interchro=False,
     local_range=1e20,
     read_length=100,
 ):
     """
-    Pipline to process Hi-C BAM file to filtered reads in bed format:
+    Pipline to process Hi-C BAM file to filtered reads in bed format.
+
+    Steps
+    -----
     1. Parsing BAM, write filtered PETs to intermediate files -- chr1,x1,chr2,x2,chr3,x3...
     2. call linux `sort` and `uniq` to remove duplication
-    (1 and 2 is done by `construct_stringent_local_pair`)
+        (1 and 2 is done by `construct_stringent_local_pair`)
+
+        Considering following situation of a PET with `n` mapped segments:
+        1. n == 2: Always includes re-ligation, self-ligation, dangling-end pairs;
+                For interchrom and validpairs determine by `exclude_interchro` and `local_range` respectively
+        2. n > 2: if any pair of fragment were determined to `False` base on situation 1, discard the PET.
+
     3. each chr_i,x_i flatten to one bed record and dump to output file
 
-    `local_range`: 1e20 in default to include all cis pairs
-    `exclude_interchro`: `False` in default to include interchromosomal pairs (can be more than 2 mapped fragments)
+    Parameters
+    ----------
+    bam_file: path to the multiple-pass mapped and paired BAM.
+    mapq: keep high mapq reads.
+    digestion_sites: raw regexp string, digestion sites use for the Hi-C experiment.
+    out: path for the output bed file
+    nprocs: number of cpu to be used
+    procs_per_pysam: the function split `nprocs // procs_per_pysam` pysam jobs to parallel process the `bam_file` to speedup.
+        Each pysam job is using `pysam_parallel` cores. (Note: one pysam jobs using `nprocs` cores is not efficient)
+    local_range: 1e20 in default to include all cis pairs
+    exclude_interchro: default `False` to include interchromosomal pairs (Note that it dumps all (>=2) mapped fragments)
     """
+
     construct_stringent_local_pair(
         bam_file,
         local_range,
@@ -178,7 +218,7 @@ def dump_PETs_to_bed(
         digestion_sites,
         "temp.out",
         nprocs,
-        parallel,
+        procs_per_pysam,
     )
 
     logging.info(f"Flattening to PETs to {read_length} bp reads")
@@ -211,17 +251,23 @@ def construct_stringent_local_pair(
     digestion_sites,
     out,
     nprocs,
-    parallel,
+    proc_per_pysam,
 ):
     """
-    Parse chunks (worker_id:n_workers:End) of paired BAM file to Hi-C validpair data.
+    Parse (worker_id:n_workers:End) PET record in paired BAM file to Hi-C validpair data and dump the filterd record and dump the filterd records
+
     Considering following situation of a PET of `n` mapped segments:
-    1. n == 2: Always includes re-ligation, self-ligation, dangling-end pairs; For interchrom and validpairs determine by `exclude_interchro` and `local_range` respectively
+    1. n == 2: Always includes re-ligation, self-ligation, dangling-end pairs;
+            For interchrom and validpairs determine by `exclude_interchro` and `local_range` respectively
     2. n > 2: if any pair of fragment were determined to `False` base on situation 1, discard the PET.
+
+    Parameters
+    ----------
+        `?dump_PETs_to_bed` for details
     """
-    procs_per_worker, workers, workers_out = nprocs // parallel, [], []
+    parallel, workers, workers_out = nprocs // proc_per_pysam, [], []
     kernel = count_stringent_local_high_order_pet.options(
-        num_cpus=procs_per_worker
+        num_cpus=proc_per_pysam
     )
     logging.info("Parsing bam data to Hi-C pairs")
     for i in range(parallel):
@@ -235,7 +281,7 @@ def construct_stringent_local_pair(
                 exclude_interchro,
                 mapq,
                 digestion_sites,
-                procs_per_worker,
+                proc_per_pysam,
                 i,
                 parallel,
                 temp_out,
@@ -284,7 +330,16 @@ def count_stringent_local_high_order_pet(
     temp_file,
 ):
     """
-    Parse records of chunks (worker_id:n_workers:End) of BAM file to Hi-C PETs data
+    Parse (worker_id:n_workers:End) th PET records in BAM file to Hi-C type pairs.
+
+    Considering following situation of a PET of `n` mapped segments:
+    1. n == 2: Always includes re-ligation, self-ligation, dangling-end pairs;
+            For interchrom and validpairs determine by `exclude_interchro` and `local_range` respectively
+    2. n > 2: if any pair of fragment were determined to `False` base on situation 1, discard the PET.
+
+    Parameters
+    ----------
+        `?dump_PETs_to_bed` for details
     """
     cnt, local_pet = 0, 0
     pysam.set_verbosity(0)
@@ -297,8 +352,8 @@ def count_stringent_local_high_order_pet(
         )
         # each sequence PET is parsed to a list of MappedFrags
         # This function only keeps stringent local pairs of following configurations:
-        # len(MappedSeg) == 2: Re-ligation, Self-ligation, dangling-end, inter chromasomal, and dist <= `short_cis
-        # len(MappedSeg) > 2: if all cis _longest_cis <= `short_cist`; all inter chro, keep all; inter chro + cis <= `short_dist`
+        # len(MappedSeg) == 2: Re-ligation, Self-ligation, dangling-end, inter chromasomal (by `exclude_interchro`), and dist <= `short_cis`
+        # len(MappedSeg) > 2: if all cis _longest_cis <= `short_cist`; all inter chro, keep all (by `exclude_interchro`); inter chro + cis <= `short_dist`
         for _, raw_data in worker_items_iter:
             data = list(raw_data)
             is_local = None
@@ -306,7 +361,6 @@ def count_stringent_local_high_order_pet(
                 cnt += 1
                 frags = list(map(bam_rec_to_mapped_seg, data))
                 frags.sort(key=operator.attrgetter("chromosome", "middle"))
-                # for PET that has more than 2 mapped fragment, keep the longest separated pairs
                 frag_i, frag_j = _longest_cis_pair(frags)
                 if frag_i.chromosome != frag_j.chromosome:
                     # inter chro
@@ -320,6 +374,7 @@ def count_stringent_local_high_order_pet(
                         [frag_i.middle, frag_j.middle],
                     )
                     if res_j - res_i > 1:
+                        # validpair
                         if frag_j.middle - frag_i.middle <= local_range:
                             # short cis
                             is_local = True
@@ -426,6 +481,8 @@ def mvp_rmdup(inp, out):
 
 ########### Functions that parsed MP BAM file into MappedSegment ############
 class MappedSegment(NamedTuple):
+    """Not differentiating R1 and R2"""
+
     chromosome: str
     start: int
     middle: int
@@ -444,7 +501,7 @@ def bam_rec_to_mapped_seg(rec):
 
 def mp_bam_rec_reader(bfh, mapq):
     def is_discard_rec(rec):
-        return rec.is_unmapped or rec.mapping_quality <= mapq
+        return rec.is_unmapped or rec.mapping_quality < mapq
 
     mp_bam_rec_iter = itertools.groupby(
         itertools.filterfalse(is_discard_rec, bfh),

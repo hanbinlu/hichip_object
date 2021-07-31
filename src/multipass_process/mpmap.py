@@ -3,7 +3,27 @@ import pysam, subprocess
 import re2 as re
 
 # %%
-def multipass_mapping_from_hicpro(hicpro_results, project_name, ligation_site, genome_index, nthd):
+def multipass_mapping_from_hicpro(
+    hicpro_results, project_name, ligation_site, genome_index, nthd
+):
+    """
+    Map all the segments of a read splitted by `ligation_site`.
+
+    Description
+    -----------
+    The first pass mapping (global + local) has done by HiC-Pro. During the local mapping, unmapped reads from global mapping
+    were splited by `ligation_site`. 5' parts were subject to "local" mapping. New pass of global and local mapping is done
+    for the remanant 3' splited parts. Iterate the process until no 3' splitted parts are left for another pass of mapping.
+
+    Parameters
+    ----------
+    hicpro_results: The hicpro output dir. The function picks up from the first pass mapping and add result to the same dir for better output arrangement.
+    project_name: This is also from the step of hicpro. hicpro input structure: raw_fastq_dir/project_name/fqs
+    ligation_site: raw regexp string of ligation pattern to split the reads
+    genome_index: bowtie index
+    nthd: number of total cores to use
+    """
+
     result_dir = f"{hicpro_results}bowtie_results/bwt2_multipass/{project_name}"
     try:
         os.makedirs(result_dir)
@@ -12,20 +32,26 @@ def multipass_mapping_from_hicpro(hicpro_results, project_name, ligation_site, g
 
     bwt_opts = "--very-sensitive -L 30 --score-min L,-0.6,-0.2"
     prefix, _ = solve_pair_end_samples(hicpro_results, project_name)
-    intermediates = {pfx: {"bams": [], "5primeFq": [], "3primeFq": [], "ToMap": -1} for pfx in prefix}
+    intermediates = {
+        pfx: {"bams": [], "5primeFq": [], "3primeFq": [], "ToMap": -1}
+        for pfx in prefix
+    }
 
     # Pass 1 result from hicpro. However, add "P1RxG/L" group tag to the bam files
     ipass = 0
     global_dir = f"{hicpro_results}bowtie_results/bwt2_global/{project_name}/"
     local_dir = f"{hicpro_results}bowtie_results/bwt2_local/{project_name}/"
     for pfx in prefix:
+        # currently only recognize of R1 and R2 naming pattern
         ri = paired_side(pfx)
         # global
         tag = f"P0{ri}G"
         inp = os.path.join(global_dir, f"{pfx}.bwt2glob.bam")
         out = os.path.join(result_dir, f"{pfx}.{tag}.bam")
         unmap_pfx = os.path.join(result_dir, f"{pfx}.{tag}")
+        # add tag to hicpro mapped bam file
         pysam.addreplacerg("-r", f"ID:{tag}", "-@", f"{nthd}", "-o", out, inp)
+        # split by ligation site. 5' part for local mapping; 3' part for new pass
         leftover = split_fastq_by_motif(
             os.path.join(global_dir, f"{pfx}.bwt2glob.unmap.fastq"),
             ligation_site,
@@ -52,6 +78,7 @@ def multipass_mapping_from_hicpro(hicpro_results, project_name, ligation_site, g
 
             # global
             tag = f"P{ipass}{ri}G"
+            # 3' part for new pass of mapping
             inp = intermediates[pfx]["3primeFq"][-1]
             out = os.path.join(result_dir, f"{pfx}.{tag}.bam")
             with open(out, "w") as o:
@@ -84,6 +111,7 @@ def multipass_mapping_from_hicpro(hicpro_results, project_name, ligation_site, g
                 )
                 sam_filt.wait()
 
+            # split unmapped: 5' for local mapping of this pass; 3' for next pass
             if os.stat("temp.fq").st_size != 0:
                 unmap_pfx = os.path.join(result_dir, f"{pfx}.{tag}")
                 leftover = split_fastq_by_motif(
@@ -93,8 +121,12 @@ def multipass_mapping_from_hicpro(hicpro_results, project_name, ligation_site, g
                 )
                 os.remove("temp.fq")
                 intermediates[pfx]["bams"].append(out)
-                intermediates[pfx]["5primeFq"].append(unmap_pfx + ".5prime.fastq")
-                intermediates[pfx]["3primeFq"].append(unmap_pfx + ".3prime.fastq")
+                intermediates[pfx]["5primeFq"].append(
+                    unmap_pfx + ".5prime.fastq"
+                )
+                intermediates[pfx]["3primeFq"].append(
+                    unmap_pfx + ".3prime.fastq"
+                )
                 intermediates[pfx]["ToMap"] = leftover
 
                 # local
@@ -145,6 +177,7 @@ def multipass_mapping_from_hicpro(hicpro_results, project_name, ligation_site, g
         f"{result_dir}/merged.bam",
         *[b for pfx in prefix for b in intermediates[pfx]["bams"]],
     )
+    # sort by name. multiple mapped segment of a read and the mate pair will be grouped together
     pysam.sort(
         "-m",
         "1024M",
@@ -185,7 +218,14 @@ def split_fastq_by_motif(fastq, motif, prefix):
             if m:
                 cnt += 1
                 start, end = m.span()
-                out5_write(name1 + seq[:start] + b"\n" + name2 + qual_seq[:start] + b"\n")
+                out5_write(
+                    name1
+                    + seq[:start]
+                    + b"\n"
+                    + name2
+                    + qual_seq[:start]
+                    + b"\n"
+                )
                 out3_write(name1 + seq[end:] + name2 + qual_seq[end:])
 
     return cnt
@@ -222,7 +262,13 @@ def paired_side(str):
 
 
 def solve_pair_end_samples(hicpro_results, project_name):
-    bams = [f for f in os.listdir(f"{hicpro_results}bowtie_results/bwt2_global/{project_name}/") if f.endswith("bam")]
+    bams = [
+        f
+        for f in os.listdir(
+            f"{hicpro_results}bowtie_results/bwt2_global/{project_name}/"
+        )
+        if f.endswith("bam")
+    ]
     if len(bams) % 2 != 0:
         raise Exception("Files are not paired")
 

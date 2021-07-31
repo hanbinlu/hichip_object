@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 import logging
 from scipy.stats import binom
 import matplotlib.pyplot as plt
