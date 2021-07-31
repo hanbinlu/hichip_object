@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
     name="hichip_object",
     version="0.10.0",
-    packages=["hichip_object", "multipass_process"],
-    scripts=["scripts/pipeline.py"],
+    packages=find_packages(where="src"),
+    package_dir={"": "src"},
+    # scripts=["scripts/pipeline.py"],
     install_requires=[
         "pysam",
         "google-re2",
@@ -16,9 +17,11 @@ setup(
         "numba",
         "ray",
         "statsmodels",
+        "scikit-learn",
         "patsy",
         "networkx",
         "matplotlib",
-        "rpy2",
+        "rpy2",  # to use smooth.spline function
+        "macs2",  # if needs to call peaks
     ],
 )

@@ -2,8 +2,8 @@ import numpy as np
 import logging
 from scipy.stats import binom
 import matplotlib.pyplot as plt
-from model_ILD import build_feature_PET_models, _spline_fit_model
-from loop_calling_handler import GenericLoopCallHandler
+from .model_ILD import build_feature_PET_models, _spline_fit_model
+from .loop_calling_handler import GenericLoopCallHandler
 
 
 class Loop_MANGO(GenericLoopCallHandler):

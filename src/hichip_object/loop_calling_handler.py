@@ -3,13 +3,13 @@ import pandas as pd
 import logging
 from scipy.sparse import diags
 from statsmodels.stats.multitest import multipletests
-from load_loop_data import (
+from .load_loop_data import (
     loop_PET_count,
     putative_loops_from_anchors,
     anchor_depth_by_anchor_PETs,
     anchor_depth_by_A2N_PETs,
 )
-from load_hic_matrix import build_hic_matrix
+from .load_hic_matrix import build_hic_matrix
 
 
 class GenericLoopCallHandler(object):

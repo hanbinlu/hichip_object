@@ -4,8 +4,8 @@ import statsmodels.api as sm
 from scipy.stats import poisson
 from statsmodels.distributions import zipoisson
 from patsy import dmatrix
-from model_ILD import _bin_x_along_y_eq_count
-from loop_calling_handler import GenericLoopCallHandler
+from .model_ILD import _bin_x_along_y_eq_count
+from .loop_calling_handler import GenericLoopCallHandler
 
 
 class Loop_ZIP(GenericLoopCallHandler):

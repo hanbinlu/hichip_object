@@ -1,7 +1,7 @@
 import os, subprocess, logging
 import pandas as pd
-from mvp import dump_PETs_to_bed
-from load_loop_data import (
+from multipass_process.mvp import dump_PETs_to_bed
+from .load_loop_data import (
     genomic_bins,
     genomic_anchor_bins,
     merge_anchors_bins,
