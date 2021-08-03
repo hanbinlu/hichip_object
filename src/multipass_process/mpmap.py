@@ -1,5 +1,5 @@
 import os, gzip, mmap
-import pysam, subprocess
+import pysam, subprocess, logging
 import re2 as re
 
 # %%
@@ -30,6 +30,13 @@ def multipass_mapping_from_hicpro(
     except OSError as error:
         print(error)
 
+    logger = logging.getLogger("mpmap")
+    fh = logging.FileHandler(f"{result_dir}/mpmap.log")
+    formatter = logging.Formatter("%(asctime)s: %(message)s")
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+
     bwt_opts = "--very-sensitive -L 30 --score-min L,-0.6,-0.2"
     prefix, _ = solve_pair_end_samples(hicpro_results, project_name)
     intermediates = {
@@ -38,6 +45,7 @@ def multipass_mapping_from_hicpro(
     }
 
     # Pass 1 result from hicpro. However, add "P1RxG/L" group tag to the bam files
+    logger.info("@Pass 1: processing HiC-Pro results")
     ipass = 0
     global_dir = f"{hicpro_results}bowtie_results/bwt2_global/{project_name}/"
     local_dir = f"{hicpro_results}bowtie_results/bwt2_local/{project_name}/"
@@ -61,6 +69,7 @@ def multipass_mapping_from_hicpro(
         intermediates[pfx]["5primeFq"].append(unmap_pfx + ".5prime.fastq")
         intermediates[pfx]["3primeFq"].append(unmap_pfx + ".3prime.fastq")
         intermediates[pfx]["ToMap"] = leftover
+
         # local
         tag = f"P0{ri}L"
         inp = os.path.join(local_dir, f"{pfx}.bwt2glob.unmap_bwt2loc.bam")
@@ -68,15 +77,24 @@ def multipass_mapping_from_hicpro(
         pysam.addreplacerg("-r", f"ID:{tag}", "-@", f"{nthd}", "-o", out, inp)
         intermediates[pfx]["bams"].append(out)
 
+        logger.info(f"@Pass 1, {pfx}: {leftover} reads for next pass to map")
+        logger.info(f"@Pass 1, {pfx}: Finished")
+
+    logger.info(f"@Pass 1: Done")
+
     # multi pass mapping
     while any([intermediates[pfx]["ToMap"] != 0 for pfx in prefix]):
         ipass += 1
+        logger.info(f"@Pass {ipass+1} mapping")
+
         for pfx in prefix:
             if intermediates[pfx]["ToMap"] == 0:
                 continue
+
             ri = paired_side(pfx)
 
             # global
+            logger.info(f"@Pass {ipass+1}, {pfx}, global mapping")
             tag = f"P{ipass}{ri}G"
             # 3' part for new pass of mapping
             inp = intermediates[pfx]["3primeFq"][-1]
@@ -102,7 +120,7 @@ def multipass_mapping_from_hicpro(
                         inp,
                     ],
                     stdout=subprocess.PIPE,
-                    stderr=None,  # subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
                 sam_filt = subprocess.Popen(
                     ["samtools", "view", "-F", "4", "-bS", "-"],
@@ -111,8 +129,14 @@ def multipass_mapping_from_hicpro(
                 )
                 sam_filt.wait()
 
-            # split unmapped: 5' for local mapping of this pass; 3' for next pass
+            logger.info(f"@Pass {ipass+1}, {pfx}, global mapping stats")
+            for line in map_proc.stderr.decode().split("\n"):
+                logger.info(f"@Pass {ipass+1}, {pfx}, {line}")
+
+            # local: split unmapped: 5' for local mapping of this pass; 3' for next pass
             if os.stat("temp.fq").st_size != 0:
+                # split reads
+                logger.info(f"@Pass {ipass+1}, {pfx}, local mapping")
                 unmap_pfx = os.path.join(result_dir, f"{pfx}.{tag}")
                 leftover = split_fastq_by_motif(
                     "temp.fq",
@@ -129,11 +153,13 @@ def multipass_mapping_from_hicpro(
                 )
                 intermediates[pfx]["ToMap"] = leftover
 
-                # local
+                # local mapping
                 tag = f"P{ipass}{ri}L"
                 inp = intermediates[pfx]["5primeFq"][-1]
                 out = os.path.join(result_dir, f"{pfx}.{tag}.bam")
                 with open(out, "w") as o:
+                    logger.info(f"@Pass {ipass+1}, {pfx}, local mapping stats")
+
                     map_proc = subprocess.Popen(
                         [
                             "bowtie2",
@@ -154,21 +180,50 @@ def multipass_mapping_from_hicpro(
                             inp,
                         ],
                         stdout=subprocess.PIPE,
-                        stderr=None,  # subprocess.PIPE,
+                        stderr=subprocess.PIPE,
                     )
                     sam_filt = subprocess.Popen(
                         ["samtools", "view", "-F", "4", "-bS", "-"],
                         stdin=map_proc.stdout,
                         stdout=o,
                     )
+
+                    # mapping stats
+                    for line in iter(map_proc.stderr.readline, b""):
+                        line = line.decode().rstrip()
+                        if (
+                            line.startswith("#")
+                            or line.startswith("perl")
+                            or line.startswith("\s")
+                            or line.startswith("Warn")
+                        ):
+                            continue
+                        else:
+                            logger.info(f"@Pass {ipass+1}, {pfx}, {line}")
+
                     sam_filt.wait()
 
+                # log process
                 os.remove("temp.fq")
                 intermediates[pfx]["bams"].append(out)
+                if leftover != 0:
+                    logger.info(
+                        f"@Pass {ipass+1}, {pfx}: {leftover} reads for next pass to map"
+                    )
+                    logger.info(f"@Pass {ipass+1}, {pfx}: Finished")
+                else:
+                    logger.info(f"@Pass {ipass+1}, {pfx}: Finished")
+                    logger.info(f"{pfx} multipass mapping done")
             else:
                 intermediates[pfx]["ToMap"] = 0
+                logger.info(f"@Pass {ipass+1}, {pfx}: Finished")
+                logger.info(f"{pfx} multipass mapping done")
+
+        logger.info(f"@Pass {ipass+1}: Done")
+    logger.info(f"Multipass mapping done")
 
     # merge all bams
+    logger.info(f"Merging bam files")
     pysam.merge(
         "-@",
         str(nthd),
@@ -178,6 +233,7 @@ def multipass_mapping_from_hicpro(
         *[b for pfx in prefix for b in intermediates[pfx]["bams"]],
     )
     # sort by name. multiple mapped segment of a read and the mate pair will be grouped together
+    logger.info(f"Sorting merged bam file by name")
     pysam.sort(
         "-m",
         "1024M",
@@ -195,6 +251,10 @@ def multipass_mapping_from_hicpro(
         [os.remove(f) for f in files["bams"]]
         [os.remove(f) for f in files["5primeFq"]]
         [os.remove(f) for f in files["3primeFq"]]
+
+    logger.info("Done")
+
+    return f"{result_dir}/{project_name}.merged.bam"
 
 
 # multipass_mapping_from_hicpro(

@@ -5,9 +5,12 @@ from setuptools import setup, find_packages
 setup(
     name="hichip_object",
     version="0.10.0",
+    author="Hanbin Lu",
+    author_email="lhb032@gmail.com",
+    license="LICENSE",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
-    # scripts=["scripts/pipeline.py"],
+    scripts=["scripts/hicpro_to_mvp.py"],
     install_requires=[
         "pysam",
         "google-re2",

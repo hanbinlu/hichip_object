@@ -25,15 +25,23 @@ def construct_mpp_validpair(
     ----------
     bam_file: path to the multiple-pass mapped and paired BAM.
     mapq: keep high mapq reads.
-    digestion_sites: raw regexp string, digestion sites use for the Hi-C experiment.
+    digestion_sites: dictionary, chr->[array of digestion sitepositions]
     out: path for the output mvp file
     nprocs: number of cpu to be used
     procs_per_pysam: the function split `nprocs // procs_per_pysam` pysam jobs to parallel process the `bam_file` to speedup.
         Each pysam job is using `pysam_parallel` cores. (Note: one pysam jobs using `nprocs` cores is not efficient)
     """
+    logger = logging.getLogger("create_mvp")
+    fh = logging.FileHandler(f"{out}.stats")
+    formatter = logging.Formatter("%(asctime)s: %(message)s")
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+
     parallel, workers, workers_out = nprocs // procs_per_pysam, [], []
     kernel = count_high_order_pet.options(num_cpus=procs_per_pysam)
     # worker i takes care of `itertools.islice(i, None, parallel)` PET records in `bam_file`
+    logger.info(f"Start parsing {bam_file}")
     for i in range(parallel):
         temp_out = f"{out}.{i}"
         # temp mvp files
@@ -56,8 +64,18 @@ def construct_mpp_validpair(
     vp = sum([x[1] for x in results])
     re_de_dump = sum([x[2] for x in results])
     inter_chro = sum([x[3] for x in results])
+    cnt_2frags = sum([x[4] for x in results])
+
+    logger.info(
+        f"{cnt} multiple mapped fragment PETs, {cnt_2frags} ({cnt_2frags/cnt}) are two-frag PETs"
+    )
+    logger.info(
+        f"{vp} validpairs, {inter_chro/vp*100}% are interchromosomal validpairs"
+    )
+    logger.info(f"{re_de_dump} religation, dangling end, and dump pairs")
 
     # mvp tag: chr1,x1,chr2,x2,chr3,x3... record all mapped segment of a PET
+    logger.info("Removing duplications")
     with open(f"{out}.sorted", "w") as o:
         cat_proc = subprocess.Popen(
             ["cat", *workers_out], stdout=subprocess.PIPE
@@ -69,15 +87,17 @@ def construct_mpp_validpair(
         )
         sort_mvp.wait()
 
-    mvp_rmdup(f"{out}.sorted", out)
+    num_rmdup_vps = mvp_rmdup(f"{out}.sorted", out)
 
     [os.remove(f) for f in workers_out]
     os.remove(f"{out}.sorted")
 
-    return cnt, vp, re_de_dump, inter_chro
+    logger.info(
+        f"{num_rmdup_vps} ({num_rmdup_vps / vp}) validpairs are kept from duplication removal"
+    )
 
 
-@ray.remote(num_returns=4)
+@ray.remote(num_returns=5)
 def count_high_order_pet(
     bam_file, mapq, digestion_sites, nthd, worker_id, n_workers, temp_file
 ):
@@ -86,7 +106,7 @@ def count_high_order_pet(
 
     For records has more than 2 mapped fragment, keep the "longest" pair.
     """
-    cnt, vp, re_de_dump, inter_chro = 0, 0, 0, 0
+    cnt, vp, re_de_dump, inter_chro, cnt_2frag = 0, 0, 0, 0, 0
     with pysam.AlignmentFile(bam_file, threads=nthd) as bfh, open(
         temp_file, "w", 1024 * 100
     ) as o:
@@ -99,6 +119,7 @@ def count_high_order_pet(
             data = list(raw_data)
             if len(data) >= 2:
                 cnt += 1
+                cnt_2frag += len(data) == 2
                 frags = list(map(bam_rec_to_mapped_seg, data))
                 frags.sort(key=operator.attrgetter("chromosome", "middle"))
                 # for PET that has more than 2 mapped fragment, keep the longest separated pairs
@@ -138,7 +159,7 @@ def count_high_order_pet(
                     )
                     o.write(mvp_rec)
 
-    return cnt, vp, re_de_dump, inter_chro
+    return cnt, vp, re_de_dump, inter_chro, cnt_2frag
 
 
 def _longest_cis_pair(frags):
@@ -471,12 +492,16 @@ def _write_mvp_rec(qname, frag_i, frag_j, res_i, res_j, mvp_tag):
 
 
 def mvp_rmdup(inp, out):
+    count = 0
     with open(inp) as f, open(out, "w", 1024 * 1024) as o:
         mvp_tag_gen = (line.rsplit("\t", 1) for line in f)
         for _, rec in itertools.groupby(
             mvp_tag_gen, key=operator.itemgetter(1)
         ):
+            count += 1
             o.write(next(rec)[0] + "\n")
+
+    return count
 
 
 ########### Functions that parsed MP BAM file into MappedSegment ############
