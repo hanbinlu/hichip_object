@@ -5,12 +5,7 @@ from multipass_process.mvp import genome_digestion, construct_mpp_validpair
 # logging to the console
 logging.basicConfig(level=logging.INFO)
 formatter = logging.Formatter("%(asctime)s: %(message)s")
-
-logger = logging.getLogger("hicpro2mvp")
-ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
-ch.setFormatter(formatter)
-logger.addHandler(ch)
+logger = logging.getLogger()  # root logger
 
 # command line args
 parser = argparse.ArgumentParser(

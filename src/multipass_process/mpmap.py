@@ -105,6 +105,7 @@ def multipass_mapping_from_hicpro(
             # 3' part for new pass of mapping
             inp = intermediates[pfx]["3primeFq"][-1]
             out = os.path.join(result_dir, f"{pfx}.{tag}.bam")
+            intermediates[pfx]["bams"].append(out)
             with open(out, "w") as o:
                 map_proc = subprocess.Popen(
                     [
@@ -163,7 +164,6 @@ def multipass_mapping_from_hicpro(
                     "temp.fq", ligation_site, unmap_pfx,
                 )
                 os.remove("temp.fq")
-                intermediates[pfx]["bams"].append(out)
                 intermediates[pfx]["5primeFq"].append(
                     unmap_pfx + ".5prime.fastq"
                 )
@@ -176,6 +176,7 @@ def multipass_mapping_from_hicpro(
                 tag = f"P{ipass}{ri}L"
                 inp = intermediates[pfx]["5primeFq"][-1]
                 out = os.path.join(result_dir, f"{pfx}.{tag}.bam")
+                intermediates[pfx]["bams"].append(out)
                 with open(out, "w") as o:
                     logger.info(f"@Pass {ipass+1}, {pfx}, local mapping stats")
 
@@ -224,7 +225,6 @@ def multipass_mapping_from_hicpro(
 
                 # log process
                 os.remove("temp.fq")
-                intermediates[pfx]["bams"].append(out)
                 if leftover != 0:
                     logger.info(
                         f"@Pass {ipass+1}, {pfx}: {leftover} reads for next pass to map"
