@@ -3,9 +3,11 @@ from multipass_process.mpmap import multipass_mapping_from_hicpro
 from multipass_process.mvp import genome_digestion, construct_mpp_validpair
 
 # logging to the console
+logging.basicConfig(level=logging.INFO)
+formatter = logging.Formatter("%(asctime)s: %(message)s")
+
 logger = logging.getLogger("hicpro2mvp")
 ch = logging.StreamHandler()
-formatter = logging.Formatter("%(asctime)s: %(message)s")
 ch.setLevel(logging.INFO)
 ch.setFormatter(formatter)
 logger.addHandler(ch)
@@ -21,21 +23,38 @@ parser.add_argument(
 parser.add_argument("genome_index", type=str, help="bowtie2 genome index")
 parser.add_argument("genome_fa", type=str, help="genome sequence file")
 parser.add_argument(
-    "--num_cpus", type=int, help="number of cpu cores to use", default=8
+    "--bowtie2_path",
+    type=str,
+    help="bowtie2 program path, default to find in env PATH",
+    default="bowtie2",
+)
+parser.add_argument(
+    "--samtools_path",
+    type=str,
+    help="samtools program path, default to find in env PATH",
+    default="samtools",
+)
+parser.add_argument(
+    "--num_cpus",
+    type=int,
+    help="number of cpu cores to use, default 8",
+    default=8,
 )
 parser.add_argument(
     "--ligation_site",
     type=bytes,
-    help="digestion site used for the Hi-C experiment",
+    help="ligation partern used for the Hi-C experiment, default MseI + DdeI",
     default=b"(CT[ATCG]AT[ATCG]AG)|(CT[ATCG]ATAA)|(TTAT[ATCG]AG)|(TTATAA)",
 )
 parser.add_argument(
     "--digestion_site",
     type=str,
-    help="digestion site used for the Hi-C experiment",
+    help="digestion site used for the Hi-C experiment, default MseI + DdeI",
     default="(CT[ATCG]AG)|(TTAA)",
 )
-parser.add_argument("--mapq", type=int, help="MAPQ filter", default=10)
+parser.add_argument(
+    "--mapq", type=int, help="MAPQ filter, default 10", default=10
+)
 args = parser.parse_args()
 
 # Processing data
@@ -46,6 +65,8 @@ multipass_mapped_bam = multipass_mapping_from_hicpro(
     args.ligation_site,
     args.genome_index,
     args.num_cpus,
+    args.bowtie2_path,
+    args.samtools_path,
 )
 logger.info("@multipass mapping: finished")
 logger.info("@parse to MVP: start")

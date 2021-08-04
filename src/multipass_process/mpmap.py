@@ -4,7 +4,13 @@ import re2 as re
 
 # %%
 def multipass_mapping_from_hicpro(
-    hicpro_results, project_name, ligation_site, genome_index, nthd
+    hicpro_results,
+    project_name,
+    ligation_site,
+    genome_index,
+    nthd,
+    bowtie2_path,
+    samtools_path,
 ):
     """
     Map all the segments of a read splitted by `ligation_site`.
@@ -102,7 +108,7 @@ def multipass_mapping_from_hicpro(
             with open(out, "w") as o:
                 map_proc = subprocess.Popen(
                     [
-                        "bowtie2",
+                        bowtie2_path,
                         *bwt_opts.split(" "),
                         "--end-to-end",
                         "--reorder",
@@ -122,16 +128,31 @@ def multipass_mapping_from_hicpro(
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                 )
+
                 sam_filt = subprocess.Popen(
-                    ["samtools", "view", "-F", "4", "-bS", "-"],
+                    [samtools_path, "view", "-F", "4", "-bS", "-"],
                     stdin=map_proc.stdout,
                     stdout=o,
                 )
+
+                # mapping stats
+                for line in iter(map_proc.stderr.readline, b""):
+                    line = line.decode().rstrip()
+                    if (
+                        line.startswith("#")
+                        or line.startswith("perl")
+                        or line.startswith("\s")
+                        or line.startswith("Warn")
+                    ):
+                        continue
+                    else:
+                        logger.info(f"@Pass {ipass+1}, {pfx}, {line}")
+
                 sam_filt.wait()
 
-            logger.info(f"@Pass {ipass+1}, {pfx}, global mapping stats")
-            for line in map_proc.stderr.decode().split("\n"):
-                logger.info(f"@Pass {ipass+1}, {pfx}, {line}")
+            # logger.info(f"@Pass {ipass+1}, {pfx}, global mapping stats")
+            # for line in map_proc.stderr.decode().split("\n"):
+            #    logger.info(f"@Pass {ipass+1}, {pfx}, {line}")
 
             # local: split unmapped: 5' for local mapping of this pass; 3' for next pass
             if os.stat("temp.fq").st_size != 0:
@@ -139,9 +160,7 @@ def multipass_mapping_from_hicpro(
                 logger.info(f"@Pass {ipass+1}, {pfx}, local mapping")
                 unmap_pfx = os.path.join(result_dir, f"{pfx}.{tag}")
                 leftover = split_fastq_by_motif(
-                    "temp.fq",
-                    ligation_site,
-                    unmap_pfx,
+                    "temp.fq", ligation_site, unmap_pfx,
                 )
                 os.remove("temp.fq")
                 intermediates[pfx]["bams"].append(out)
@@ -162,7 +181,7 @@ def multipass_mapping_from_hicpro(
 
                     map_proc = subprocess.Popen(
                         [
-                            "bowtie2",
+                            bowtie2_path,
                             *bwt_opts.split(" "),
                             "--end-to-end",
                             "--reorder",
@@ -183,7 +202,7 @@ def multipass_mapping_from_hicpro(
                         stderr=subprocess.PIPE,
                     )
                     sam_filt = subprocess.Popen(
-                        ["samtools", "view", "-F", "4", "-bS", "-"],
+                        [samtools_path, "view", "-F", "4", "-bS", "-"],
                         stdin=map_proc.stdout,
                         stdout=o,
                     )
@@ -236,7 +255,7 @@ def multipass_mapping_from_hicpro(
     logger.info(f"Sorting merged bam file by name")
     pysam.sort(
         "-m",
-        "1024M",
+        "500M",
         "-@",
         str(nthd),
         "-n",
