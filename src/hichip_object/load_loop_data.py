@@ -618,3 +618,98 @@ def merge_anchors(anchors, gap):
             "end": end,
         }
     )
+
+
+def process_peak_to_anchor_bins(
+    peak_file,
+    chro_size,
+    format="macs2_narrow",
+    resolution=2500,
+    # merge_adjacent=True,
+):
+    """
+    Extend peak and merge into non-overlapping anchors
+    """
+    gbs = genomic_bins(chro_size, resolution)
+    if format == "macs2_narrow":
+        peaks = pd.read_csv(
+            peak_file,
+            sep="\t",
+            skiprows=1,
+            header=None,
+        ).iloc[:, 0:3]
+        peaks.columns = ["chro", "start", "end"]
+        # peak_anchor_bins, _ = genomic_anchor_bins(gbs, peaks, merge_adjacent)
+        gbs["Num_Anchors"] = genomic_anchor_bins(
+            gbs, peaks, merge_adjacent=False
+        )[1]
+        # add up anchor number too
+        gbs_merged = merge_anchors_bins(gbs)
+    elif format == "homer_peaks":
+        peaks = pd.read_csv(
+            peak_file,
+            sep="\t",
+            skiprows=39,
+        ).iloc[:, 1:4]
+        peaks.columns = ["chro", "start", "end"]
+        # peak_anchor_bins, _ = genomic_anchor_bins(gbs, peaks, merge_adjacent)
+        gbs["Num_Anchors"] = genomic_anchor_bins(
+            gbs, peaks, merge_adjacent=False
+        )[1]
+        # add up anchor number too
+        gbs_merged = merge_anchors_bins(gbs)
+    elif format == "bed":
+        peaks = pd.read_csv(
+            peak_file,
+            sep="\t",
+            comment="#",
+            header=None,
+        ).iloc[:, 0:3]
+        peaks.columns = ["chro", "start", "end"]
+        # peak_anchor_bins, _ = genomic_anchor_bins(gbs, peaks, merge_adjacent)
+        gbs["Num_Anchors"] = genomic_anchor_bins(
+            gbs, peaks, merge_adjacent=False
+        )[1]
+        # add up anchor number too
+        gbs_merged = merge_anchors_bins(gbs)
+    else:
+        raise ValueError("Peak file format unknown")
+
+    return gbs_merged
+
+
+def process_peak_to_anchors_centered(
+    peak_file,
+    format="macs2_narrow",
+    extend_peak_size=2500,
+    merge_peak_gap=1000,
+):
+    """
+    Extend peak and merge into non-overlapping anchors
+    """
+    if format == "macs2_narrow":
+        extensive_peaks = pd.read_csv(
+            peak_file,
+            sep="\t",
+            skiprows=1,
+            header=None,
+        ).iloc[:, 0:3]
+        extensive_peaks.columns = ["chro", "start", "end"]
+        extensive_anchors = merge_anchors(
+            extend_anchors(extensive_peaks, extend_peak_size), merge_peak_gap
+        )
+    elif format == "homer_peaks":
+        extensive_peaks = pd.read_csv(
+            peak_file,
+            sep="\t",
+            skiprows=39,
+            header=None,
+        ).iloc[:, 1:4]
+        extensive_peaks.columns = ["chro", "start", "end"]
+        extensive_anchors = merge_anchors(
+            extend_anchors(extensive_peaks, extend_peak_size), merge_peak_gap
+        )
+    else:
+        raise ValueError("Peak file format unknown")
+
+    return extensive_anchors

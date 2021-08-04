@@ -10,7 +10,7 @@ setup(
     license="LICENSE",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
-    scripts=["scripts/hicpro_to_mvp.py"],
+    scripts=["scripts/hicpro_to_mvp.py", "scripts/hichip_callpeaks.py"],
     install_requires=[
         "pysam",
         "google-re2",
@@ -18,7 +18,7 @@ setup(
         "scipy",
         "pandas",
         "numba",
-        "ray",
+        "ray[default]",
         "statsmodels",
         "scikit-learn",
         "patsy",

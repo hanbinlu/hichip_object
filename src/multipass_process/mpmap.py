@@ -161,7 +161,9 @@ def multipass_mapping_from_hicpro(
                 logger.info(f"@Pass {ipass+1}, {pfx}, local mapping")
                 unmap_pfx = os.path.join(result_dir, f"{pfx}.{tag}")
                 leftover = split_fastq_by_motif(
-                    "temp.fq", ligation_site, unmap_pfx,
+                    "temp.fq",
+                    ligation_site,
+                    unmap_pfx,
                 )
                 os.remove("temp.fq")
                 intermediates[pfx]["5primeFq"].append(
@@ -238,7 +240,7 @@ def multipass_mapping_from_hicpro(
                 logger.info(f"@Pass {ipass+1}, {pfx}: Finished")
                 logger.info(f"{pfx} multipass mapping done")
 
-        logger.info(f"@Pass {ipass+1}: Done")
+            logger.info(f"@Pass {ipass+1}: Done")
     logger.info(f"Multipass mapping done")
 
     # merge all bams

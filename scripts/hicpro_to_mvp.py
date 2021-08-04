@@ -3,8 +3,7 @@ from multipass_process.mpmap import multipass_mapping_from_hicpro
 from multipass_process.mvp import genome_digestion, construct_mpp_validpair
 
 # logging to the console
-logging.basicConfig(level=logging.INFO)
-formatter = logging.Formatter("%(asctime)s: %(message)s")
+logging.basicConfig(level=logging.INFO, formatter="%(asctime)s: %(message)s")
 logger = logging.getLogger()  # root logger
 
 # command line args
