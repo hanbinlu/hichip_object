@@ -539,9 +539,9 @@ def genome_digestion(genome_fa, motif):
     pattern = re.compile(motif)
     dig_pos = {}
     with pysam.FastxFile(genome_fa) as f:
-        for entry in f.references:
-            dig_pos[entry] = np.array(
-                [m.end() - 1 for m in pattern.finditer(f.fetch(entry))]
+        for entry in f:
+            dig_pos[entry.name] = np.array(
+                [m.end() - 1 for m in pattern.finditer(entry.sequence)]
             )
 
     return dig_pos

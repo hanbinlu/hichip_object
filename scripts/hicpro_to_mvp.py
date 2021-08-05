@@ -1,4 +1,4 @@
-import argparse, subprocess, logging
+import argparse, subprocess, logging, ray
 from multipass_process.mpmap import multipass_mapping_from_hicpro
 from multipass_process.mvp import genome_digestion, construct_mpp_validpair
 
@@ -73,6 +73,7 @@ logger.info("@parse to MVP: start")
 digested_frags = genome_digestion(args.genome_fa, args.digestion_site)
 # process to MVP file
 subprocess.run(f"mkdir {args.hicpro_results}/mvp_results/", shell=True)
+ray.init(num_cpus=args.num_cpus)
 construct_mpp_validpair(
     multipass_mapped_bam,
     args.mapq,
