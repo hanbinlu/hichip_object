@@ -1,4 +1,4 @@
-import os, argparse
+import os, argparse, ray
 import subprocess, logging
 from multipass_process.mvp import dump_PETs_to_bed, genome_digestion
 
@@ -178,6 +178,7 @@ def call_anchors_from_hichip(
 
 
 digested_frags = genome_digestion(args.genome_fa, args.digestion_site)
+ray.init(num_cpus=args.num_cpus)
 call_anchors_from_hichip(
     args.bam,
     digested_frags,
