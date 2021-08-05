@@ -107,6 +107,7 @@ def count_high_order_pet(
     For records has more than 2 mapped fragment, keep the "longest" pair.
     """
     cnt, vp, re_de_dump, inter_chro, cnt_2frag = 0, 0, 0, 0, 0
+    pysam.set_verbosity(0)
     with pysam.AlignmentFile(bam_file, threads=nthd) as bfh, open(
         temp_file, "w", 1024 * 100
     ) as o:
@@ -145,6 +146,8 @@ def count_high_order_pet(
                         vp += 1
                     else:
                         # religation, dangling end, dump pair
+                        if res_j - res_i < 0:
+                            raise ValueError("What happen")
                         is_vp = False
                         re_de_dump += 1
 
