@@ -8,11 +8,11 @@ from typing import NamedTuple
 from random import sample
 import ray
 
-MseI_DdeI_Digestion_Site = r"(CT[ATCG]AG)|(TTAA)"
-MseI_DdeI_Ligated_Site = (
-    b"(CT[ATCG]AT[ATCG]AG)|(CT[ATCG]ATAA)|(TTAT[ATCG]AG)|(TTATAA)"
-)
-MboI_Digestion_Site = r"GATC"
+# MseI_DdeI_Digestion_Site = r"(CT[ATCG]AG)|(TTAA)"
+# MseI_DdeI_Ligated_Site = (
+#     b"(CT[ATCG]AT[ATCG]AG)|(CT[ATCG]ATAA)|(TTAT[ATCG]AG)|(TTATAA)"
+# )
+# MboI_Digestion_Site = r"GATC"
 
 ########## Process Multiple Pass Mapped BAM File to ValidPair  ############
 def construct_mpp_validpair(
@@ -143,16 +143,14 @@ def count_high_order_pet(
                     )
                     if res_j - res_i > 1:
                         is_vp = True
-                        vp += 1
                     else:
                         # religation, dangling end, dump pair
-                        if res_j - res_i < 0:
-                            raise ValueError("What happen")
                         is_vp = False
                         re_de_dump += 1
 
                 # write result in validpair format suffix with tag describing all the mapped segments
                 if is_vp:
+                    vp += 1
                     mvp_tag = _mvp_tag(frags)
                     mvp_rec = (
                         _write_mvp_rec(
@@ -544,7 +542,7 @@ def genome_digestion(genome_fa, motif):
     with pysam.FastxFile(genome_fa) as f:
         for entry in f:
             dig_pos[entry.name] = np.array(
-                [m.end() - 1 for m in pattern.finditer(entry.sequence)]
+                [m.end() - 1 for m in pattern.finditer(entry.sequence.upper())]
             )
 
     return dig_pos
