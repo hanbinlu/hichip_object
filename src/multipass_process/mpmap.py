@@ -56,6 +56,7 @@ def multipass_mapping_from_hicpro(
     global_dir = f"{hicpro_results}bowtie_results/bwt2_global/{project_name}/"
     local_dir = f"{hicpro_results}bowtie_results/bwt2_local/{project_name}/"
     for pfx in prefix:
+        logger.info(f"@Pass 1: processing {pfx}")
         # currently only recognize of R1 and R2 naming pattern
         ri = paired_side(pfx)
         # global
@@ -83,15 +84,14 @@ def multipass_mapping_from_hicpro(
         pysam.addreplacerg("-r", f"ID:{tag}", "-@", f"{nthd}", "-o", out, inp)
         intermediates[pfx]["bams"].append(out)
 
-        logger.info(f"@Pass 1, {pfx}: {leftover} reads for next pass to map")
-        logger.info(f"@Pass 1, {pfx}: Finished")
+        logger.info(f"\t{leftover} reads for next pass to map")
 
     logger.info(f"@Pass 1: Done")
 
     # multi pass mapping
     while any([intermediates[pfx]["ToMap"] != 0 for pfx in prefix]):
         ipass += 1
-        logger.info(f"@Pass {ipass+1} mapping")
+        logger.info(f"@Pass {ipass+1}: mapping 3' splited parts")
 
         for pfx in prefix:
             if intermediates[pfx]["ToMap"] == 0:
@@ -100,7 +100,7 @@ def multipass_mapping_from_hicpro(
             ri = paired_side(pfx)
 
             # global
-            logger.info(f"@Pass {ipass+1}, {pfx}, global mapping")
+            logger.info(f"@Pass {ipass+1}: {pfx} global mapping")
             tag = f"P{ipass}{ri}G"
             # 3' part for new pass of mapping
             inp = intermediates[pfx]["3primeFq"][-1]
@@ -147,7 +147,7 @@ def multipass_mapping_from_hicpro(
                     ):
                         continue
                     else:
-                        logger.info(f"@Pass {ipass+1}, {pfx}, {line}")
+                        logger.info(f"\t{line}")
 
                 sam_filt.wait()
 
@@ -158,7 +158,7 @@ def multipass_mapping_from_hicpro(
             # local: split unmapped: 5' for local mapping of this pass; 3' for next pass
             if os.stat("temp.fq").st_size != 0:
                 # split reads
-                logger.info(f"@Pass {ipass+1}, {pfx}, local mapping")
+                logger.info(f"@Pass {ipass+1}: {pfx} local mapping")
                 unmap_pfx = os.path.join(result_dir, f"{pfx}.{tag}")
                 leftover = split_fastq_by_motif(
                     "temp.fq",
@@ -180,8 +180,6 @@ def multipass_mapping_from_hicpro(
                 out = os.path.join(result_dir, f"{pfx}.{tag}.bam")
                 intermediates[pfx]["bams"].append(out)
                 with open(out, "w") as o:
-                    logger.info(f"@Pass {ipass+1}, {pfx}, local mapping stats")
-
                     map_proc = subprocess.Popen(
                         [
                             bowtie2_path,
@@ -221,24 +219,19 @@ def multipass_mapping_from_hicpro(
                         ):
                             continue
                         else:
-                            logger.info(f"@Pass {ipass+1}, {pfx}, {line}")
+                            logger.info(f"\t{line}")
 
                     sam_filt.wait()
 
                 # log process
                 os.remove("temp.fq")
                 if leftover != 0:
-                    logger.info(
-                        f"@Pass {ipass+1}, {pfx}: {leftover} reads for next pass to map"
-                    )
-                    logger.info(f"@Pass {ipass+1}, {pfx}: Finished")
+                    logger.info(f"\t{leftover} reads for next pass to map")
                 else:
-                    logger.info(f"@Pass {ipass+1}, {pfx}: Finished")
-                    logger.info(f"{pfx} multipass mapping done")
+                    logger.info(f"@Pass {ipass+1}: {pfx} no read left to map")
             else:
                 intermediates[pfx]["ToMap"] = 0
-                logger.info(f"@Pass {ipass+1}, {pfx}: Finished")
-                logger.info(f"{pfx} multipass mapping done")
+                logger.info(f"@Pass {ipass+1}: {pfx} no read left to map")
 
             logger.info(f"@Pass {ipass+1}: Done")
     logger.info(f"Multipass mapping done")

@@ -3,8 +3,13 @@ from multipass_process.mpmap import multipass_mapping_from_hicpro
 from multipass_process.mvp import genome_digestion, construct_mpp_validpair
 
 # logging to the console
-logging.basicConfig(level=logging.INFO, formatter="%(asctime)s: %(message)s")
-logger = logging.getLogger()  # root logger
+logging.getLogger().setLevel(logging.INFO)
+formatter = logging.Formatter("%(asctime)s: %(message)s")
+logger = logging.getLogger("hicpro_to_mvp")
+hdl = logging.StreamHandler()
+hdl.setLevel(logging.INFO)
+hdl.setFormatter(formatter)
+logger.addHandler(hdl)
 
 # command line args
 parser = argparse.ArgumentParser(
@@ -65,7 +70,7 @@ multipass_mapped_bam = multipass_mapping_from_hicpro(
 logger.info("@multipass mapping: finished")
 logger.info("@parse to MVP: start")
 # digestion fragments
-digested_frags = genome_digestion(args.genome_fa, args.digestion_sites)
+digested_frags = genome_digestion(args.genome_fa, args.digestion_site)
 # process to MVP file
 subprocess.run(f"mkdir {args.hicpro_results}/mvp_results/", shell=True)
 construct_mpp_validpair(

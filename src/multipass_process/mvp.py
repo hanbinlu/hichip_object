@@ -538,7 +538,7 @@ def mp_bam_rec_reader(bfh, mapq):
 def genome_digestion(genome_fa, motif):
     pattern = re.compile(motif)
     dig_pos = {}
-    with pysam.FastaFile(genome_fa) as f:
+    with pysam.FastxFile(genome_fa) as f:
         for entry in f.references:
             dig_pos[entry] = np.array(
                 [m.end() - 1 for m in pattern.finditer(f.fetch(entry))]
