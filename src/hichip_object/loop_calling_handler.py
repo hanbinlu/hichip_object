@@ -155,7 +155,7 @@ class GenericLoopCallHandler(object):
             f"{sum(significant_interactions)} interactions were called at qval <= 0.1, count >= {self.count_cut}"
         )
 
-    def write_interaction_statistics(self, f):
+    def write_interaction_statistics(self, f, count=0, q=1):
         # build pandas table to write
         df = pd.concat(
             [
@@ -172,7 +172,9 @@ class GenericLoopCallHandler(object):
             axis=1,
         )
         df.columns = ["chr1", "x1", "y1", "chr2", "x2", "y2", "counts", "qval"]
-        df.to_csv(f, sep="\t", header=None, index=None)
+        df[(df.counts >= count) & (df.qval <= q)].to_csv(
+            f, sep="\t", header=None, index=None
+        )
 
 
 def _compile_loop_metric(loop_pet, putative_loops, anchor_depth):

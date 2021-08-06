@@ -483,6 +483,7 @@ def _write_mvp_rec(qname, frag_i, frag_j, res_i, res_j, mvp_tag):
         frag_j.chromosome,
         str(frag_j.middle),
         "+",
+        "NA",
         str(res_i),
         str(res_j),
         str(frag_i.mapq),
