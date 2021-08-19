@@ -36,6 +36,8 @@ def construct_mpp_validpair(
     formatter = logging.Formatter("%(asctime)s: %(message)s")
     fh.setLevel(logging.INFO)
     fh.setFormatter(formatter)
+    if logger.hasHandlers():
+        logger.handlers.clear()
     logger.addHandler(fh)
 
     parallel, workers, workers_out = nprocs // procs_per_pysam, [], []
@@ -81,7 +83,7 @@ def construct_mpp_validpair(
             ["cat", *workers_out], stdout=subprocess.PIPE
         )
         sort_mvp = subprocess.Popen(
-            ["sort", "-k12,12", "--parallel", str(nprocs), "-S", "20G"],
+            ["sort", "-k13,13", "--parallel", str(nprocs), "-S", "20G"],
             stdin=cat_proc.stdout,
             stdout=o,
         )

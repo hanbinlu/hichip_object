@@ -53,7 +53,7 @@ def construct_mpp_validhub(
         )
 
     # merge temp outputs
-    # mppValidHubs format:
+    # mppValidHubs concise format:
     # chros positions   mapqs
     # chr1,chr2,chr3    x1,x2,x3    mapq1,mapq2,mapq3
     results = [ray.get(j) for j in workers]
@@ -76,24 +76,38 @@ def construct_mpp_validhub(
     logger.info(f"n >= 6 cis validhubs: {cis_vh_6_plus}")
 
     logger.info("Removing duplications")
-    with open(f"{out}.sorted", "w") as o:
+    with open(f"{out}.unique", "w") as o:
         cat_proc = subprocess.Popen(
             ["cat", *workers_out], stdout=subprocess.PIPE
         )
-        sort_mvp = subprocess.Popen(
+        sort_mvh = subprocess.Popen(
             ["sort", "-k12,12", "--parallel", str(nprocs), "-S", "20G"],
             stdin=cat_proc.stdout,
-            stdout=o,
+            stdout=subprocess.PIPE,
         )
-        sort_mvp.wait()
+        uniq_mvh = subprocess.Popen(["uniq"], stdin=sort_mvh.stdout, stdout=o)
+        uniq_mvh.wait()
 
-    num_rmdup_vps = mvh_rmdup(f"{out}.sorted", out)
+    # mppValidHubs format:
+    # record: chr1,chr2,chr3    x1,x2,x3    mapq1,mapq2,mapq3
+    # flattern to sam hub id bed records
+    # hub_x chr1 x1
+    # hub_x chr2 x2
+    # hub_x chr3 x3
+    hub_cnt = 0
+    with open(f"{out}.unique") as inp, open(out, "w", 1024 * 1024) as o:
+        for line in inp:
+            hub_cnt += 1
+            chros, positions = line.rstrip().split("\t")
+            hub_id = f"hub_{hub_cnt}"
+            for chro, pos in zip(chros.split(","), positions.split(",")):
+                o.write("\t".join([hub_id, chro, str(pos)]) + "\n")
 
     [os.remove(f) for f in workers_out]
-    os.remove(f"{out}.sorted")
+    os.remove(f"{out}.unique")
 
     logger.info(
-        f"{num_rmdup_vps} ({num_rmdup_vps / vh}) validpairs are kept from duplication removal"
+        f"{hub_cnt} ({hub_cnt / vh}) validpairs are kept from duplication removal"
     )
 
 
@@ -112,7 +126,6 @@ def count_high_order_pet(
     with pysam.AlignmentFile(bam_file, threads=nthd) as bfh, open(
         temp_file, "w", 1024 * 100
     ) as o:
-        o.write("#chro\tpos\tmapq\n")
         # slicing records in the BAM file to parse
         worker_items_iter = itertools.islice(
             mp_bam_rec_reader(bfh, mapq), worker_id, None, n_workers
@@ -200,7 +213,6 @@ def count_high_order_pet(
                     mbed_data = [
                         ",".join([frg.chromosome for frg in merged_frags]),
                         ",".join([str(frg.middle) for frg in merged_frags]),
-                        ",".join([str(frg.mapq) for frg in merged_frags]),
                     ]
                     o.write("\t".join(mbed_data) + "\n")
 
@@ -216,14 +228,14 @@ def count_high_order_pet(
     )
 
 
-def mvh_rmdup(inp, out):
-    count = 0
-    with open(inp) as f, open(out, "w", 1024 * 1024) as o:
-        mvh_tag_gen = (line.rsplit("\t", 1) for line in f)
-        for _, rec in itertools.groupby(
-            mvh_tag_gen, key=operator.itemgetter(0)
-        ):
-            count += 1
-            o.write("\t".join(next(rec)) + "\n")
-
-    return count
+# def mvh_rmdup(inp, out):
+#    count = 0
+#    with open(inp) as f, open(out, "w", 1024 * 1024) as o:
+#        mvh_tag_gen = (line.rsplit("\t", 1) for line in f)
+#        for _, rec in itertools.groupby(
+#            mvh_tag_gen, key=operator.itemgetter(0)
+#        ):
+#            count += 1
+#            o.write("\t".join(next(rec)) + "\n")
+#
+#    return count
