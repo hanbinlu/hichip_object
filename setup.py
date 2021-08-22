@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="hichip_object",
-    version="0.10.0",
+    version="0.11.0",
     author="Hanbin Lu",
     author_email="lhb032@gmail.com",
     license="LICENSE",
