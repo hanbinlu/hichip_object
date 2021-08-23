@@ -167,13 +167,13 @@ def count_high_order_pet(
 
 def _select_pair(frags, low=5000, high=2000000, how="rand"):
     """
-    Selection rule performance
-    -------------------------------------------------------------------------
-    rand pair (rand): 24.694
-    rand cis (rand_cis): 24.688
-    longest cis (longest_cis): 24.876
-    rand midrange (rand_mrng): 24.847
-    longest midrange (longest_mrng): 24.854
+    Selection rules:
+    ---------------
+    rand pair (rand)
+    rand cis (rand_cis)
+    longest cis (longest_cis)
+    rand midrange (rand_mrng)
+    longest midrange (longest_mrng)
     """
 
     pairs = list(itertools.combinations(frags, 2))
