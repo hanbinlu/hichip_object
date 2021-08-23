@@ -167,9 +167,7 @@ def count_high_order_pet(
 
 def _select_pair(frags, low=5000, high=2000000, how="rand"):
     """
-    if there are cis pairs, rand a midrange pair. Otherwise, rand out an interchro pair
-
-    Test selection rule performance using APA score on HiChIP and HiC Dataset
+    Selection rule performance
     -------------------------------------------------------------------------
     rand pair (rand): 24.694
     rand cis (rand_cis): 24.688
@@ -177,6 +175,10 @@ def _select_pair(frags, low=5000, high=2000000, how="rand"):
     rand midrange (rand_mrng): 24.847
     longest midrange (longest_mrng): 24.854
     """
+
+    pairs = list(itertools.combinations(frags, 2))
+    if how == "rand":
+        return choice(pairs)
 
     pairs = list(itertools.combinations(frags, 2))
     if how == "rand":
