@@ -5,7 +5,7 @@ import pysam
 import re2 as re  # pip install google-re2
 import numpy as np
 from typing import NamedTuple
-from random import sample
+from random import choice
 import ray
 
 # MseI_DdeI_Digestion_Site = r"(CT[ATCG]AG)|(TTAA)"
@@ -126,7 +126,7 @@ def count_high_order_pet(
                 frags = list(map(bam_rec_to_mapped_seg, data))
                 frags.sort(key=operator.attrgetter("chromosome", "middle"))
                 # for PET that has more than 2 mapped fragment, keep the longest separated pairs
-                frag_i, frag_j = _longest_cis_pair(frags)
+                frag_i, frag_j = _select_pair(frags, how="longest_mrng")
                 if frag_i.chromosome != frag_j.chromosome:
                     is_vp = True
                     inter_chro += 1
@@ -165,32 +165,50 @@ def count_high_order_pet(
     return cnt, vp, re_de_dump, inter_chro, cnt_2frag
 
 
-def _longest_cis_pair(frags):
-    """if there are cis pairs, keep the longest separation pair. Otherwise, rand out an interchro pair"""
+def _select_pair(frags, low=5000, high=2000000, how="rand"):
+    """
+    if there are cis pairs, rand a midrange pair. Otherwise, rand out an interchro pair
 
-    # group by chromosomes
-    res = {}
-    for frg in frags:
-        res.setdefault(frg.chromosome, []).append(frg)
+    Test selection rule performance using APA score on HiChIP and HiC Dataset
+    -------------------------------------------------------------------------
+    rand pair (rand): 24.694
+    rand cis (rand_cis): 24.688
+    longest cis (longest_cis): 24.876
+    rand midrange (rand_mrng): 24.847
+    longest midrange (longest_mrng): 24.854
+    """
 
-    longest_dist, chro_of_longest = 0, ""
-    for k, v in res.items():
-        if len(v) > 1:
-            # v.sort(key=operator.attrgetter("middle"))
-            dist = v[-1].middle - v[0].middle
-            if dist > longest_dist:
-                longest_dist = dist
-                chro_of_longest = k
+    pairs = list(itertools.combinations(frags, 2))
+    if how == "rand":
+        return choice(pairs)
 
-    if longest_dist:
-        return res[chro_of_longest][0], res[chro_of_longest][-1]
-    else:
-        # all inter chro
-        # rand two segments
-        i, j = sample(range(len(frags)), 2)
-        if j > i:
-            i, j = j, i
-        return frags[i], frags[j]
+    # cis priority
+    cis_pairs = list(
+        filter(lambda x: x[0].chromosome == x[1].chromosome, pairs)
+    )
+    if len(cis_pairs) == 0:
+        return choice(pairs)
+    elif how == "rand_cis":
+        return choice(cis_pairs)
+    elif how == "longest_cis":
+        return max(cis_pairs, key=lambda x: x[1].middle - x[0].middle)
+
+    # midrange priority
+    mid_rng_pairs = list(
+        filter(
+            lambda x: (x[1].middle - x[0].middle >= low)
+            and (x[1].middle - x[0].middle <= high),
+            cis_pairs,
+        )
+    )
+    if len(cis_pairs) == 0:
+        return choice(pairs)
+    elif len(mid_rng_pairs) == 0:
+        return choice(cis_pairs)
+    elif how == "rand_mrng":
+        return choice(mid_rng_pairs)
+    elif how == "longest_mrng":
+        return max(mid_rng_pairs, key=lambda x: x[1].middle - x[0].middle)
 
 
 ########## Select PETs from Multiple Pass Mapped BAM to Dump as Reads ############
