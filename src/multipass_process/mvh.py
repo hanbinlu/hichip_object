@@ -117,8 +117,6 @@ def count_high_order_pet(
 ):
     """
     Parse (worker_id:n_workers:End) th PET record in paired BAM file to Hi-C validpair data and add mvp tag for all mapped segs of the PET
-
-    For records has more than 2 mapped fragment, keep the "longest" pair.
     """
     cnt = vh = inter_chro = 0
     cis_vh = cis_vh_3 = cis_vh_4 = cis_vh_5 = cis_vh_6_plus = 0
