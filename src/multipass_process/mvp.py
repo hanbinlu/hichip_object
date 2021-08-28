@@ -16,7 +16,13 @@ import ray
 
 ########## Process Multiple Pass Mapped BAM File to ValidPair  ############
 def construct_mpp_validpair(
-    bam_file, mapq, digestion_sites, out, nprocs, procs_per_pysam=2
+    bam_file,
+    mapq,
+    digestion_sites,
+    out,
+    nprocs,
+    procs_per_pysam=2,
+    mvp_selection_rule="longest_cis",
 ):
     """
     Process multiple-pass mapped and paired BAM to validpair records. Output is sorted and duplication removed.
@@ -57,6 +63,7 @@ def construct_mpp_validpair(
                 i,
                 parallel,
                 temp_out,
+                mvp_selection_rule,
             )
         )
 
@@ -101,7 +108,14 @@ def construct_mpp_validpair(
 
 @ray.remote(num_returns=5)
 def count_high_order_pet(
-    bam_file, mapq, digestion_sites, nthd, worker_id, n_workers, temp_file
+    bam_file,
+    mapq,
+    digestion_sites,
+    nthd,
+    worker_id,
+    n_workers,
+    temp_file,
+    mvp_selection_rule,
 ):
     """
     Parse (worker_id:n_workers:End) th PET record in paired BAM file to Hi-C validpair data and add mvp tag for all mapped segs of the PET
@@ -126,7 +140,7 @@ def count_high_order_pet(
                 frags = list(map(bam_rec_to_mapped_seg, data))
                 frags.sort(key=operator.attrgetter("chromosome", "middle"))
                 # for PET that has more than 2 mapped fragment, keep the longest separated pairs
-                frag_i, frag_j = _select_pair(frags, how="longest_mrng")
+                frag_i, frag_j = _select_pair(frags, how=mvp_selection_rule)
                 if frag_i.chromosome != frag_j.chromosome:
                     is_vp = True
                     inter_chro += 1
