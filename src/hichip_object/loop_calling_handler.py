@@ -6,6 +6,7 @@ from statsmodels.stats.multitest import multipletests
 from .load_loop_data import (
     loop_PET_count,
     putative_loops_from_anchors,
+    putative_p2a_loops,
     anchor_depth_by_anchor_PETs,
     anchor_depth_by_A2N_PETs,
 )
@@ -114,6 +115,81 @@ class GenericLoopCallHandler(object):
 
         logging.info(
             f"{len(self.anchors)} of anchors forms {len(self.loop_metric)} putative mid-range loops"
+        )
+        logging.info(
+            f"{len(self.loop_metric[self.loop_metric.C != 0])} observed loops that contains {self.loop_metric.C.sum()} PETs (avg = {self.count_cut})"
+        )
+
+    @classmethod
+    def P2A_Loops(
+        self,
+        vp,
+        genomic_bins,
+        inter_range=(5000, 2_000_000),
+        parallel=20,
+    ):
+        """Call significant loops from P2A bins"""
+
+        # Notes:
+        # 1. putative_loops will be connectome of all bins within distance range
+        #   For 2.5 kb resolution in mouse genome, it will be a list of # loops
+        # 2.
+
+        # genomic_bins are pd.DataFrame in bed format and are sorted
+        # colnames ["chro", "start", "end"] (add check for colname obligation)
+        # 4th column "Num_Anchors", non zero value indicates the correpondent gb has anchors
+        if any(genomic_bins.index.values != np.arange(len(genomic_bins))):
+            raise ValueError("Anchors index must be RangeIndex")
+        self.genomic_bins = genomic_bins.copy()
+
+        # interaction distance to be considered
+        self.dist_low, self.dist_high, self.parallel = (
+            inter_range[0],
+            inter_range[1],
+            parallel,
+        )
+        # intra, dist qualified anchor pairs
+        putative_loops = putative_p2a_loops(
+            self.genomic_bins, inter_range, parallel
+        )
+
+        # read interaction data into anchor-anchor sparse matrix
+        logging.info("Loading loop PETs")
+        # loading hic matrix
+        self.contact_matrix = build_hic_matrix(
+            vp, self.genomic_bins, self.parallel
+        )
+        # drop loop_pets of unqualified anchor pairs
+        loop_pet = self.contact_matrix.multiply(putative_loops != 0)
+        # count bin depth by all vp
+        gb_anchor_depth = (
+            self.contact_matrix.sum(axis=0).A1
+            + self.contact_matrix.sum(axis=1).A1
+        )
+
+        sig_mean = gb_anchor_depth[gb_anchor_depth != 0].mean()
+        gb_anchor_depth /= sig_mean
+
+        # mask 0 depth anchors
+        mask_opt = diags(gb_anchor_depth != 0, format="csc", dtype=int)
+        putative_loops = mask_opt * putative_loops * mask_opt
+        loop_pet = mask_opt * loop_pet * mask_opt
+
+        # organize loop_pet and putative_loops into metric table
+        # loop_metric is data for all putative loops
+        logging.info("Joining data")
+        self.loop_metric = _compile_loop_metric(
+            loop_pet, putative_loops, gb_anchor_depth
+        )
+        self.interaction_statistics = self.loop_metric.loc[
+            self.loop_metric.C != 0
+        ].copy()
+
+        self.genomic_bins["Depth"] = gb_anchor_depth
+        self.count_cut = self.loop_metric.C[self.loop_metric.C != 0].mean()
+
+        logging.info(
+            f"{sum(self.genomic_bins.Num_Anchors != 0)} of anchors forms {len(self.loop_metric)} putative mid-range P2A loops"
         )
         logging.info(
             f"{len(self.loop_metric[self.loop_metric.C != 0])} observed loops that contains {self.loop_metric.C.sum()} PETs (avg = {self.count_cut})"

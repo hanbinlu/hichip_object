@@ -238,6 +238,7 @@ def dump_PETs_to_bed(
     exclude_interchro=False,
     local_range=1e20,
     read_length=100,
+    mvp_selection_rule="longest_cis",
 ):
     """
     Pipline to process Hi-C BAM file to filtered reads in bed format.
@@ -277,6 +278,7 @@ def dump_PETs_to_bed(
         "temp.out",
         nprocs,
         procs_per_pysam,
+        mvp_selection_rule,
     )
 
     logging.info(f"Flattening to PETs to {read_length} bp reads")
@@ -310,6 +312,7 @@ def construct_stringent_local_pair(
     out,
     nprocs,
     proc_per_pysam,
+    mvp_selection_rule,
 ):
     """
     Parse (worker_id:n_workers:End) PET record in paired BAM file to Hi-C validpair data and dump the filterd record and dump the filterd records
@@ -343,6 +346,7 @@ def construct_stringent_local_pair(
                 i,
                 parallel,
                 temp_out,
+                mvp_selection_rule,
             )
         )
 
@@ -386,6 +390,7 @@ def count_stringent_local_high_order_pet(
     worker_id,
     n_workers,
     temp_file,
+    mvp_selection_rule,
 ):
     """
     Parse (worker_id:n_workers:End) th PET records in BAM file to Hi-C type pairs.
@@ -419,7 +424,7 @@ def count_stringent_local_high_order_pet(
                 cnt += 1
                 frags = list(map(bam_rec_to_mapped_seg, data))
                 frags.sort(key=operator.attrgetter("chromosome", "middle"))
-                frag_i, frag_j = _longest_cis_pair(frags)
+                frag_i, frag_j = _select_pair(frags, how=mvp_selection_rule)
                 if frag_i.chromosome != frag_j.chromosome:
                     # inter chro
                     if exclude_interchro:
