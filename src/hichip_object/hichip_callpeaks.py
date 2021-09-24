@@ -1,4 +1,4 @@
-import os, ray
+import os
 import subprocess, logging
 from multipass_process.mvp import dump_PETs_to_bed, genome_digestion
 

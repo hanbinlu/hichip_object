@@ -481,7 +481,7 @@ def genomic_anchor_bins(genomic_bins, anchors, merge_adjacent=True):
         assigned_bin = (
             np.searchsorted(
                 genomic_bins.start.values[chro_bins_idx],
-                chro_anchors.start,
+                chro_anchors.start.values,
                 side="right",
             )
             - 1
@@ -492,7 +492,7 @@ def genomic_anchor_bins(genomic_bins, anchors, merge_adjacent=True):
         assigned_bin = (
             np.searchsorted(
                 genomic_bins.start.values[chro_bins_idx],
-                chro_anchors.end,
+                chro_anchors.end.values,
                 side="right",
             )
             - 1
@@ -625,7 +625,8 @@ def process_peak_to_anchor_bins(
     chro_size,
     format="macs2_narrow",
     resolution=2500,
-    # merge_adjacent=True,
+    filter_qval=0.01,
+    merge_adjacent=True,
 ):
     """
     Extend peak and merge into non-overlapping anchors
@@ -637,7 +638,8 @@ def process_peak_to_anchor_bins(
             sep="\t",
             skiprows=1,
             header=None,
-        ).iloc[:, 0:3]
+        )
+        peaks = peaks[peaks.iloc[:, 8] >= -np.log10(filter_qval)].iloc[:, 0:3]
         peaks.columns = ["chro", "start", "end"]
         # peak_anchor_bins, _ = genomic_anchor_bins(gbs, peaks, merge_adjacent)
         gbs["Num_Anchors"] = genomic_anchor_bins(
@@ -675,7 +677,10 @@ def process_peak_to_anchor_bins(
     else:
         raise ValueError("Peak file format unknown")
 
-    return gbs_merged
+    if merge_adjacent:
+        return gbs_merged
+    else:
+        return gbs
 
 
 def process_peak_to_anchors_centered(
