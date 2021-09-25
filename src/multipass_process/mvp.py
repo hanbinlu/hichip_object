@@ -239,6 +239,7 @@ def dump_PETs_to_bed(
     local_range=1e20,
     read_length=100,
     mvp_selection_rule="longest_cis",
+    flatten_as_one_frag=True,
 ):
     """
     Pipline to process Hi-C BAM file to filtered reads in bed format.
@@ -254,7 +255,7 @@ def dump_PETs_to_bed(
                 For interchrom and validpairs determine by `exclude_interchro` and `local_range` respectively
         2. n > 2: if any pair of fragment were determined to `False` base on situation 1, discard the PET.
 
-    3. each chr_i,x_i flatten to one bed record and dump to output file
+    3. if `flatten_as_one_frag` is `False`, each chr_i,x_i flatten to one bed record and dump to output file. Otherwise, treat as a frag: chr,x_min,x_max
 
     Parameters
     ----------
@@ -282,20 +283,34 @@ def dump_PETs_to_bed(
     )
 
     logging.info(f"Flattening to PETs to {read_length} bp reads")
-    half_rl = read_length // 2
-    with open("temp.out") as inp, open(out, "w") as o:
-        for line in inp:
-            fields = line.split(",")
-            for i in range(0, len(fields), 2):
-                chro, pos = fields[i], int(fields[i + 1])
-                o.write(
-                    chro
-                    + "\t"
-                    + str(pos - half_rl)
-                    + "\t"
-                    + str(pos + half_rl)
-                    + "\n"
-                )
+    if flatten_as_one_frag:
+        if not exclude_interchro:
+            raise ValueError(
+                "If flatten to one frag, please set exclude_interchro to be True"
+            )
+
+        with open("temp.out") as inp, open(out, "w") as o:
+            for line in inp:
+                fields = line.split(",")
+                chro = fields[0]
+                pos = [int(fields[i]) for i in range(1, len(fields), 2)]
+                start, end = min(pos), max(pos)
+                o.write(chro + "\t" + str(start) + "\t" + str(end) + "\n")
+    else:
+        half_rl = read_length // 2
+        with open("temp.out") as inp, open(out, "w") as o:
+            for line in inp:
+                fields = line.split(",")
+                for i in range(0, len(fields), 2):
+                    chro, pos = fields[i], int(fields[i + 1])
+                    o.write(
+                        chro
+                        + "\t"
+                        + str(pos - half_rl)
+                        + "\t"
+                        + str(pos + half_rl)
+                        + "\n"
+                    )
 
     subprocess.run(["rm", "temp.out"])
     count_reads = subprocess.run(["wc", "-l", out], stdout=subprocess.PIPE)
