@@ -1,9 +1,11 @@
+from operator import mul
 import numpy as np
 import pandas as pd
 import itertools, ray, logging
 from numba.typed import List
 from numba import njit
 from scipy.sparse import csc_matrix
+from ray.util import multiprocessing
 
 
 def loop_PET_count(
@@ -114,6 +116,42 @@ def putative_loops_from_anchors(anchors, inter_range=(5000, 2000000)):
     #     mask_opt = diags(mask_zero_anchors, format="csc", dtype=int)
     #     qualified_anchor_pairs = mask_opt * qualified_anchor_pairs * mask_opt
     #     qualified_anchor_pairs.eliminate_zeros()
+
+    return qualified_anchor_pairs
+
+
+def putative_p2a_loops(gb_anchors, inter_range=(5000, 2000000), nthreads=10):
+    """
+    Label qualified P2A entries by value of interaction distance
+    """
+    if any(gb_anchors.index.values != np.arange(len(gb_anchors))):
+        raise ValueError("Genomic anchor bins index must be RangeIndex")
+
+    n = len(gb_anchors)
+    is_anchor = gb_anchors.Num_Anchors.astype(bool).values
+    qualified_anchor_pairs = csc_matrix((n, n), dtype=int)
+
+    def _parse_chro(chro_gb_anchors, is_anchor=is_anchor):
+        chro_qualified_anchor_pairs = csc_matrix((n, n), dtype=int)
+        centers = (chro_gb_anchors.start + chro_gb_anchors.end).values // 2
+        I, J, V = _midrange_anchor_pairs(
+            centers,
+            chro_gb_anchors.index.values,
+            inter_range[0],
+            inter_range[1],
+        )
+        p2a_index = np.logical_or(is_anchor[I], is_anchor[J])
+        chro_qualified_anchor_pairs += csc_matrix(
+            (V[p2a_index], (I[p2a_index], J[p2a_index])),
+            shape=(n, n),
+        )
+        return chro_qualified_anchor_pairs
+
+    with multiprocessing.Pool(nthreads) as p:
+        by_chro_anchor_pairs = p.map(_parse_chro, gb_anchors.groupby(by="chro"))
+
+    for mat in by_chro_anchor_pairs:
+        qualified_anchor_pairs += mat
 
     return qualified_anchor_pairs
 

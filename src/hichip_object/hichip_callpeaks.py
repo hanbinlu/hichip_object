@@ -10,6 +10,7 @@ def call_anchors_from_hichip(
     prefix,
     result_path=None,
     exclude_interchro=True,
+    flatten_as_one_frag=True,
     local_range=2000000,
     macs2_path="/home/coco/miniconda3/envs/hichip-loop/bin/macs2",
     macs2_qval=0.01,
@@ -48,6 +49,7 @@ def call_anchors_from_hichip(
                 procs_per_pysam,
                 exclude_interchro,
                 local_range,
+                flatten_as_one_frag=flatten_as_one_frag,
             )
 
         # merge
@@ -70,6 +72,7 @@ def call_anchors_from_hichip(
             procs_per_pysam,
             exclude_interchro,
             local_range,
+            flatten_as_one_frag=flatten_as_one_frag,
         )
 
     # call peaks
