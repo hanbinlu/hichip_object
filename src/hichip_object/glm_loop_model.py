@@ -57,7 +57,10 @@ class Loop_ZIP(GenericLoopCallHandler):
         disp_glm_summary=True,
     ):
         confident_interaction_index = self.interaction_statistics.index[
-            (self.interaction_statistics.P <= 1 / len(self.loop_metric))
+            (
+                self.interaction_statistics.P
+                <= 1 / len(self.interaction_statistics)
+            )
         ]
         old_expected = self.interaction_statistics.E.copy()
         # confident_interaction_index = self.interaction_statistics.index[

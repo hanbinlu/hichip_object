@@ -120,7 +120,7 @@ def putative_loops_from_anchors(anchors, inter_range=(5000, 2000000)):
     return qualified_anchor_pairs
 
 
-def putative_p2a_loops(gb_anchors, inter_range=(5000, 2000000), nthreads=10):
+def putative_p2np_loops(gb_anchors, inter_range=(5000, 2000000), nthreads=10):
     """
     Label qualified P2A entries by value of interaction distance
     """
@@ -140,9 +140,9 @@ def putative_p2a_loops(gb_anchors, inter_range=(5000, 2000000), nthreads=10):
             inter_range[0],
             inter_range[1],
         )
-        p2a_index = np.logical_or(is_anchor[I], is_anchor[J])
+        p2np_index = np.logical_xor(is_anchor[I], is_anchor[J])
         chro_qualified_anchor_pairs += csc_matrix(
-            (V[p2a_index], (I[p2a_index], J[p2a_index])),
+            (V[p2np_index], (I[p2np_index], J[p2np_index])),
             shape=(n, n),
         )
         return chro_qualified_anchor_pairs

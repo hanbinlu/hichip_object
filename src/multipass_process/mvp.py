@@ -4,7 +4,7 @@ import operator, itertools
 import pysam
 import re2 as re  # pip install google-re2
 import numpy as np
-from typing import NamedTuple
+from typing import NamedTuple, Type
 from random import choice
 import ray
 
@@ -421,6 +421,10 @@ def count_stringent_local_high_order_pet(
     """
     cnt, local_pet = 0, 0
     pysam.set_verbosity(0)
+    try:
+        low, high = local_range
+    except TypeError:
+        low, high = 0, local_range
     with pysam.AlignmentFile(bam_file, threads=nthd) as bfh, open(
         temp_file, "w", 1024 * 100
     ) as o:
@@ -453,7 +457,8 @@ def count_stringent_local_high_order_pet(
                     )
                     if res_j - res_i > 1:
                         # validpair
-                        if frag_j.middle - frag_i.middle <= local_range:
+                        L = frag_j.middle - frag_i.middle
+                        if L <= high and L >= low:
                             # short cis
                             is_local = True
                         else:
@@ -461,7 +466,10 @@ def count_stringent_local_high_order_pet(
                     else:
                         # religation, self-ligation, dangling end, dump pair
                         # dump pair are very few
-                        is_local = True
+                        if low == 0:
+                            is_local = True
+                        else:
+                            is_local = False
             elif len(data) > 2:  # high order situation
                 cnt += 1
                 frags = list(map(bam_rec_to_mapped_seg, data))
@@ -478,7 +486,8 @@ def count_stringent_local_high_order_pet(
                         [frags[0].middle, frags[-1].middle],
                     )
                     if res_j - res_i > 1:
-                        if frags[-1].middle - frags[0].middle <= local_range:
+                        L = frags[-1].middle - frags[0].middle
+                        if L <= high and L >= low:
                             # short cis
                             is_local = True
                         else:
@@ -486,17 +495,28 @@ def count_stringent_local_high_order_pet(
                     else:
                         # religation, self-ligation, dangling end, dump pair
                         # dump pair are very few
-                        is_local = True
+                        if low == 0:
+                            is_local = True
+                        else:
+                            is_local = False
                 else:  # intra + inter
                     if exclude_interchro:
                         is_local = False
                     else:
                         # single fragment default 0 <= local_range
+                        # todo: make above single chromosome situation as kernal function
+                        # for multiple chromosomes cases assessment
                         is_local = all(
-                            [
-                                v[-1].middle - v[0].middle <= local_range
-                                for _, v in res.items()
-                            ]
+                            np.logical_and(
+                                [
+                                    v[-1].middle - v[0].middle <= high
+                                    for _, v in res.items()
+                                ],
+                                [
+                                    v[-1].middle - v[0].middle >= low
+                                    for _, v in res.items()
+                                ],
+                            )
                         )
 
             # write result in validpair format suffix with tag describing all the mapped segments
