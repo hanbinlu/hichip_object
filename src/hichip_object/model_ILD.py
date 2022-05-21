@@ -6,15 +6,14 @@ from numba import njit
 from numba.typed import List
 import matplotlib.pyplot as plt
 
-# At this point of building model, it should have already prepared the following data
-# `loop_pet`: sparse matrix storing interaction values of anchor_i to anchor_j (all anchor pairs that has PET linked)
-# `dist_anchor_pairs`: sparse matrix storing interaction distance of anchor_i to anchor_j (only midrange anchor pairs)
-# `product_depth_anchor_pairs`: sparse matrix storing calculated seq depth production of anchor_i to anchor_j (only midrange anchor pairs)
-# `anchors`: data frame of anchors order and coordinate in bed format
-# `anchor_cal_depth`: pandas series of anchor's calcualted seq depth
-
-
 def build_feature_PET_models(loop_metric, feature, nbins, plot_model=True):
+    """
+    Smooth fit the curves to generate these returns:
+    `feature_model_data`: summarize the data (`loop_metric`) as a function of a `feature`, a column of `loop_metric`,
+        by slicing feature space into equal-occupancy bins (add citation).
+    `feature_PET_model`: Observed probablity as a function of feature.
+    `feature_NLOOP_model`: Possible cases (NLOOP) as a function of feature.
+    """
     feature_model_data = _eq_nz_loop_number_bin_along_feature(
         loop_metric, feature, nbins
     )
@@ -121,31 +120,38 @@ def _eq_nz_loop_number_bin_along_feature(df, feature, nbins):
     # model_data.loc[model_data.index[-1], "High"] = df[feature].max() + 1
 
     # add x, y data for fitting
+    # summarize metric for each bin
+    # how many possible instances regardless whether they have counts, "Num_ALL_Items"
     model_data["Num_ALL_Items"] = [
         sum((df[feature] >= x) & (df[feature] < y))
         for x, y in zip(model_data.Low.values, model_data.High.values)
     ]
+    # prior probability of making a bin
+    model_data["yItems"] = (
+        model_data.Num_ALL_Items / model_data.Num_ALL_Items.sum()
+    )
+    # sum counts for each bin
     model_data["Sum_PETs"] = [
         df_to_bin.C.loc[
             (df_to_bin[feature] >= x) & (df_to_bin[feature] < y)
         ].sum()
         for x, y in zip(model_data.Low.values, model_data.High.values)
     ]
+    # observed probability
+    model_data["y"] = model_data.Sum_PETs / df_to_bin.C.sum()
 
+    # non-zero average `feature` and frequencies
     model_data["x"] = [
         df_to_bin[feature]
         .loc[(df_to_bin[feature] >= low) & (df_to_bin[feature] < high)]
         .mean()
         for low, high in zip(model_data.Low.values, model_data.High.values)
     ]
-    model_data["y"] = model_data.Sum_PETs / df_to_bin.C.sum()
+    # includes bins have no count for calucation of feature average
     model_data["xItems"] = [
         df[feature].loc[(df[feature] >= x) & (df[feature] < y)].mean()
         for x, y in zip(model_data.Low.values, model_data.High.values)
     ]
-    model_data["yItems"] = (
-        model_data.Num_ALL_Items / model_data.Num_ALL_Items.sum()
-    )
 
     return model_data
 

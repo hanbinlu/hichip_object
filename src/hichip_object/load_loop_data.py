@@ -1,4 +1,3 @@
-from operator import mul
 import numpy as np
 import pandas as pd
 import itertools, ray, logging
@@ -551,7 +550,8 @@ def genomic_anchor_bins(genomic_bins, anchors, merge_adjacent=True):
 
 def merge_anchors_bins(genomic_bins):
     """
-    merge adjacent anchor bins
+    merge adjacent anchor bins.
+    Todo: replaced it with pyranges.
     """
     chro, start, end, num_anchors = [], [], [], []
     for ch, chro_gbs in genomic_bins.groupby("chro"):

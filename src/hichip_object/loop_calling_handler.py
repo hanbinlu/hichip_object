@@ -1,23 +1,37 @@
+import logging
+
 import numpy as np
 import pandas as pd
-import logging
 from scipy.sparse import diags
 from statsmodels.stats.multitest import multipletests
+
+from .load_hic_matrix import build_hic_matrix
 from .load_loop_data import (
+    anchor_depth_by_A2N_PETs,
+    anchor_depth_by_anchor_PETs,
     loop_PET_count,
     putative_loops_from_anchors,
     putative_p2np_loops,
-    anchor_depth_by_anchor_PETs,
-    anchor_depth_by_A2N_PETs,
 )
-from .load_hic_matrix import build_hic_matrix
 
 
 class GenericLoopCallHandler(object):
     """
-    The object processes the given anchors to putative loops calculated their metric from interaction data.
-    Note: loop is a term used for a pair of anchor regardless whether it is linked by PETs or significant.
-        In contrast, interaction is a term used for significant loops.
+    A generic HiChIP loop calling object provides following infrastructures:
+    1. Process HiChIP data `vp` and anchors of interest into building blocks for modeling:
+        a. `L`: List the putative loops within the distance range. Currently support the anchor/anchor pairs.
+            The implements for anchor/any pairs and any/any are experimental.
+        b. `D`: Calculate the coverage (depth) of given anchors `genomic_bins` by the HiChIP dataset `vp`.
+        c. `C`: Count interaction numbers at the putative loops.
+        d. Joining L, D, C into `loop_metric`
+    2. Iteratively fit model: `fit_model` then `refit_model` till `eps` return by fitting smaller than threshold.
+    3. Adjust p values, `P` field in the `loop_metric` added by fitting model.
+    4. Write results.
+
+    An inheritance for a concrete model should at least implement following functions:
+    1. `fit_model`: fits `loop_metric` to the model and calculate the p values for putative loops.
+    2. `re_fit`: remove significant loops from previous model fitting. Then, fit the model again.
+            Besides calculating p values, it should also return summary statistics for `iteratively_fit_model` to terminate.
     """
 
     def __init__(
@@ -55,8 +69,8 @@ class GenericLoopCallHandler(object):
         # drop loop_pets of unqualified anchor pairs
         loop_pet = loop_pet.multiply(putative_loops != 0)
 
-        # count anchor depth. mode=0: any anchor PETs;
-        # mode=1: anchor to non PETs; mode=2: anchor to anchor PETs
+        # count anchor depth. mode=0: summation on any/any PETs;
+        # mode=1: on anchor/non-anchor PETs; mode=2: anchor/anchor PETs
         logging.info("Counting anchor depth")
         if anchor_depth_mode == 1:
             anchor_depth = (

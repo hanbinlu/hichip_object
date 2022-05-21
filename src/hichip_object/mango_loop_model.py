@@ -7,7 +7,13 @@ from .loop_calling_handler import GenericLoopCallHandler
 
 
 class Loop_MANGO(GenericLoopCallHandler):
-    """ """
+    """
+    Model HiChIP data using MANGO model that models P of the Poisson process as
+    P(L=l) * P(D=d) / n_expected_loops_with_l_d
+    P(L=l) or P(L=d) is fitted by count data (PET_model)
+    n_expected_loops_with_l_d is fitted by number of loops
+        regardless whether they have counts (NLOOP_model).
+    """
 
     def __init__(self, vp, genomic_bins, nbins, **kwargs):
         self.nbins = nbins
@@ -54,9 +60,11 @@ class Loop_MANGO(GenericLoopCallHandler):
             self.interaction_statistics.C >= count
         )
         logging.info(
-            f"{sum(potential_interactions)} interactions were adjusted by averaging non-interaction neighborhood to re-build the background model"
+            f"{sum(potential_interactions)} interactions were adjusted re-build the background model"
         )
 
+        # instead removing potential interaction from building model
+        # we corrected them using the average background counts from the same meta bin
         logging.info("Adjusting and re-fitting model")
         # adjusting dist model
         dist_y_adjust = []

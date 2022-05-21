@@ -9,16 +9,19 @@ from .loop_calling_handler import GenericLoopCallHandler
 
 
 class Loop_ZIP(GenericLoopCallHandler):
-    """ """
+    """
+    Modeling HiChIP data using GLM. This object fit to ZIP distribution. Check README.md for details.
+    """
 
     def fit_model(
         self,
         exog_model_formula="C ~ np.log(D) + np.log(L)",
         exog_infl_formula="1",
-        disp_glm_summary=True,
+        disp_glm_summary=False,
     ):
         logging.info("Fitting data to ZeroInflatedPoisson model")
         # only used for zero_inflated model
+        # model inflation term as constant
         exog_infl = dmatrix(exog_infl_formula, self.loop_metric).view()
 
         # fit distri
@@ -54,7 +57,7 @@ class Loop_ZIP(GenericLoopCallHandler):
         self,
         exog_model_formula="C ~ np.log(D) + np.log(L)",
         exog_infl_formula="1",
-        disp_glm_summary=True,
+        disp_glm_summary=False,
     ):
         confident_interaction_index = self.interaction_statistics.index[
             (
@@ -102,6 +105,7 @@ class Loop_ZIP(GenericLoopCallHandler):
         self.interaction_statistics = self.loop_metric.loc[
             self.loop_metric.C != 0
         ].copy()
+        # update for expected interactions
         eps = np.square(
             old_expected - self.interaction_statistics.E.values
         ).sum()
@@ -155,6 +159,7 @@ class Loop_ZIP(GenericLoopCallHandler):
         grid_means = grid_data.C.mean().values
         grid_var = grid_data.C.var().values
         mask = grid_means == 0
+        # inflation GLM infered probability
         if infl_prob == 0:
             grid_infl = grid_data.P_Infl.mean().values
             self.grid_infl = grid_infl[~mask]
