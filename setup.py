@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="hichip_object",
-    version="0.10.0",
+    version="0.80.0",
     author="Hanbin Lu",
     author_email="lhb032@gmail.com",
     license="LICENSE",
@@ -22,7 +22,6 @@ setup(
         "statsmodels",
         "scikit-learn",
         "patsy",
-        "networkx",
         "matplotlib",
         "rpy2",  # to use smooth.spline function
         "macs2",  # if needs to call peaks

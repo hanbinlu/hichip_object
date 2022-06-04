@@ -75,14 +75,14 @@ class Loop_MANGO(GenericLoopCallHandler):
                 & (self.interaction_statistics.L < row.High)
             ]
 
-            backgound_sum_pet = row.Sum_PETs - candidate_interactions.C.sum()
-            background_mean = backgound_sum_pet / (
-                row.Num_NZ_Items - len(candidate_interactions)
-            )
-            dist_y_adjust.append(
+            old_candidate_sum = candidate_interactions.C.sum()
+            backgound_sum_pet = row.Sum_PETs - old_candidate_sum
+            adjust_candidate_sum = (
                 backgound_sum_pet
-                + background_mean * len(candidate_interactions)
+                / (row.Num_NZ_Items - len(candidate_interactions))
+                * len(candidate_interactions)
             )
+            dist_y_adjust.append(backgound_sum_pet + adjust_candidate_sum)
 
         dist_y_adjust = np.array(dist_y_adjust)
         self.dist_model_data["yAdjust"] = dist_y_adjust / dist_y_adjust.sum()
@@ -99,14 +99,14 @@ class Loop_MANGO(GenericLoopCallHandler):
                 & (self.interaction_statistics.D < row.High)
             ]
 
-            backgound_sum_pet = row.Sum_PETs - candidate_interactions.C.sum()
-            background_mean = backgound_sum_pet / (
-                row.Num_NZ_Items - len(candidate_interactions)
-            )
-            depth_y_adjust.append(
+            old_candidate_sum = candidate_interactions.C.sum()
+            backgound_sum_pet = row.Sum_PETs - old_candidate_sum
+            adjust_candidate_sum = (
                 backgound_sum_pet
-                + background_mean * len(candidate_interactions)
+                / (row.Num_NZ_Items - len(candidate_interactions))
+                * len(candidate_interactions)
             )
+            depth_y_adjust.append(backgound_sum_pet + adjust_candidate_sum)
 
         depth_y_adjust = np.array(depth_y_adjust)
         self.depth_model_data["yAdjust"] = depth_y_adjust / depth_y_adjust.sum()
