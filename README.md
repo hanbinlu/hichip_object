@@ -3,8 +3,8 @@
 ## Introduction
 
 HiChIP data contains bias from both Hi-C (distance dependent contact frequencies, <img src="https://latex.codecogs.com/svg.latex?\normal&space;L" />) and ChIP (varing coverages at anchors, <img src="https://latex.codecogs.com/svg.latex?\normal&space;D" />). 
-Calling significant loops from HiChIP dataset generally breakdown into two stages (they can be done simultaneously, see below). First, the background models, that correct the above bias, are constructed from the contact data. The models are employed to estimate expected counts (probabilities) of potential loops (all possible anchor pairs).
-Second, significancies of potential loops are quantified comparing the assumed count distribution, parameterized on expected counts given by the background models, with the observed counts.
+Calling significant loops from HiChIP dataset generally breakdown into two stages (they can be done simultaneously, see below). First, the background models, that correct the above bias, are constructed from the contact data. The models are then employed to estimate expected counts (probabilities) of potential loops (all possible anchor pairs).
+Second, significancies of potential loops are quantified via comparing the assumed count distribution (parameterized on expected counts given by the background models) with the observed counts.
 
 ## OBJECT
 ### Overdispersion
